@@ -1,6 +1,7 @@
 import { createBrowserClient } from "@/lib/supabase/client";
 import type { NoteType } from "@/lib/supabase/types";
 import { getStudyDayKey } from "@/lib/date";
+import { notifyLocalDataChanged } from "@/lib/device-sync";
 
 export type SessionNotes = {
   quick: string;
@@ -46,6 +47,7 @@ export function loadAllNotes(): StoredNote[] {
 function saveAll(notes: StoredNote[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(KEY, JSON.stringify(notes));
+  notifyLocalDataChanged();
 }
 
 export function notesForTopic(topicId: string): StoredNote[] {

@@ -6,6 +6,7 @@ import {
   weekday,
 } from "@/lib/date";
 import { invalidateAnalyticsCache } from "@/lib/analytics-cache";
+import { notifyLocalDataChanged } from "@/lib/device-sync";
 import { createBrowserClient } from "@/lib/supabase/client";
 import type { RevisionType } from "@/lib/supabase/types";
 import { loadDaySessions } from "@/lib/session-storage";
@@ -54,6 +55,7 @@ function loadRevisions(): LocalRevision[] {
 function saveRevisions(items: LocalRevision[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(REV_KEY, JSON.stringify(items));
+  notifyLocalDataChanged();
 }
 
 function loadStickers(): CalendarSticker[] {
@@ -69,6 +71,7 @@ function loadStickers(): CalendarSticker[] {
 function saveStickers(items: CalendarSticker[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(CAL_KEY, JSON.stringify(items));
+  notifyLocalDataChanged();
 }
 
 export function getRevisionsForDate(dateKey: string) {

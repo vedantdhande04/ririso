@@ -1,4 +1,5 @@
 import type { StudySessionLocal } from "@/lib/session-storage";
+import { notifyLocalDataChanged } from "@/lib/device-sync";
 
 const HISTORY_KEY = "ririso:session-history";
 
@@ -15,6 +16,7 @@ export function loadSessionHistory(): StudySessionLocal[] {
 function saveHistory(sessions: StudySessionLocal[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(HISTORY_KEY, JSON.stringify(sessions));
+  notifyLocalDataChanged();
 }
 
 /** Upsert a finished/skipped session into durable history for analytics. */

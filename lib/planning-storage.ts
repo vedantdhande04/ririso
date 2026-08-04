@@ -1,4 +1,5 @@
 import { getStudyDayKey } from "@/lib/date";
+import { notifyLocalDataChanged } from "@/lib/device-sync";
 import type { ShiftSlot } from "@/lib/supabase/types";
 
 export type ShiftSelection = {
@@ -54,6 +55,7 @@ export function loadTodayPlan(): DailyPlanLocal {
 export function saveTodayPlan(plan: DailyPlanLocal) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(plan));
+  notifyLocalDataChanged();
 }
 
 export function hasPledgedToday(): boolean {

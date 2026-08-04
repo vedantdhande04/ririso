@@ -293,6 +293,20 @@ export type Database = {
         >;
         Relationships: [];
       };
+      app_sync_state: {
+        Row: {
+          user_id: string;
+          payload: Json;
+          updated_at: string;
+        };
+        Insert: {
+          user_id: string;
+          payload?: Json;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["app_sync_state"]["Insert"]>;
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

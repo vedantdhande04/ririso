@@ -3,6 +3,7 @@ import { Nunito, Quicksand } from "next/font/google";
 
 import { AppNav } from "@/components/layout/AppNav";
 import { PlanningGate } from "@/components/planning/PlanningGate";
+import { DeviceSync } from "@/components/sync/DeviceSync";
 import { SoftConfetti } from "@/components/ui/SoftConfetti";
 
 import "./globals.css";
@@ -48,6 +49,7 @@ export default function RootLayout({
         </div>
         <AppNav />
         <PlanningGate />
+        <DeviceSync />
         <SoftConfetti />
       </body>
     </html>

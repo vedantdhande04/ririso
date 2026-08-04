@@ -184,8 +184,15 @@ export function HomeDashboard() {
   useEffect(() => {
     refresh();
     const onFocus = () => refresh();
+    const onSync = () => refresh();
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    window.addEventListener("ririso:sync-applied", onSync);
+    window.addEventListener("ririso:sessions-changed", onSync);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("ririso:sync-applied", onSync);
+      window.removeEventListener("ririso:sessions-changed", onSync);
+    };
   }, [refresh]);
 
   return (
