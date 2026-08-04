@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { FinishSessionModal } from "@/components/session/FinishSessionModal";
 import { PauseReasonPicker } from "@/components/session/PauseReasonPicker";
@@ -16,14 +16,14 @@ import { timerNudge } from "@/lib/copy";
 import { saveSessionNotes, type SessionNotes } from "@/lib/notes-storage";
 import { schedulePostStudyRevisions } from "@/lib/revision-storage";
 import {
-  allQueueResolved,
+  allStudyBlocksResolved,
   finishSession,
   formatDuration,
   getOrStartCurrentSession,
+  getSessionById,
   liveElapsedMs,
   loadDaySessions,
   pauseSession,
-  resetQueueFromPlan,
   resumeSession,
   skipSession,
   type DaySessionsState,
@@ -42,11 +42,15 @@ type GateMessage = {
   cta: string;
 };
 
-export function SessionTimer() {
+function SessionTimerInner() {
   const router = useRouter();
+  const params = useSearchParams();
+  const sessionId = params.get("id");
+
   const [state, setState] = useState<DaySessionsState | null>(null);
   const [session, setSession] = useState<StudySessionLocal | null>(null);
   const [gate, setGate] = useState<GateMessage | null>(null);
+  const [blockPrompt, setBlockPrompt] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [showPauseReasons, setShowPauseReasons] = useState(false);
   const [showFinish, setShowFinish] = useState(false);
@@ -56,33 +60,27 @@ export function SessionTimer() {
     [],
   );
 
-  useEffect(() => {
+  const boot = useCallback(() => {
     const plan = loadTodayPlan();
     const active = countActiveShifts(plan);
 
     if (!hasPledgedToday()) {
-      if (active > 0) {
-        setGate({
-          title: "A quiet promise first",
-          body: "Your plan is ready — pledge to begin Session 1.",
-          href: "/commit",
-          cta: "Go to pledge",
-        });
-      } else {
-        setGate({
-          title: "Plan your day first",
-          body: "Choose today's subjects and topics, then come back to study.",
-          href: "/",
-          cta: "Back home",
-        });
-      }
+      setGate({
+        title: active > 0 ? "A quiet promise first" : "Plan your day first",
+        body:
+          active > 0
+            ? "Your plan is ready — pledge to begin any session."
+            : "Choose today's subjects and topics, then come back.",
+        href: active > 0 ? "/commit" : "/",
+        cta: active > 0 ? "Go to pledge" : "Back home",
+      });
       return;
     }
 
     if (plan.status === "rest") {
       setGate({
         title: "Rest day",
-        body: "No study sessions planned today — enjoy the quiet page.",
+        body: "No study sessions planned today.",
         href: "/calendar",
         cta: "Open planner",
       });
@@ -90,39 +88,60 @@ export function SessionTimer() {
     }
 
     let day = loadDaySessions();
-    if (day.queue.length === 0 && active > 0) {
-      day = resetQueueFromPlan();
+    if (day.sessions.length === 0 && active > 0) {
+      day = loadDaySessions();
     }
 
-    if (allQueueResolved(day) && day.queue.length > 0) {
-      router.replace("/revision?type=same_day");
+    if (sessionId) {
+      const existing = getSessionById(sessionId, day);
+      if (!existing) {
+        setGate({
+          title: "Session not found",
+          body: "That block isn't in today's plan anymore.",
+          href: "/",
+          cta: "Back home",
+        });
+        return;
+      }
+      if (existing.status === "completed") {
+        setState(day);
+        setSession(existing);
+        setGate(null);
+        return;
+      }
+      const started = getOrStartCurrentSession(day, sessionId);
+      if (started.blockedById) {
+        setState(started.state);
+        setSession(getSessionById(sessionId, started.state));
+        setBlockPrompt(started.blockedById);
+        setGate(null);
+        return;
+      }
+      setState(started.state);
+      setSession(started.session);
+      setGate(null);
+      setBlockPrompt(null);
       return;
     }
 
-    if (day.queue.length === 0) {
+    const open = getOrStartCurrentSession(day);
+    if (!open.session) {
       setGate({
-        title: "No sessions in the queue",
-        body: "Your plan doesn't have topics yet. Add subjects and topics, then pledge again.",
+        title: "Pick a session block",
+        body: "Start any block from home — there's no required order.",
         href: "/",
         cta: "Back home",
       });
       return;
     }
-
-    const started = getOrStartCurrentSession(day);
-    setState(started.state);
-    setSession(started.session);
+    setState(open.state);
+    setSession(open.session);
     setGate(null);
+  }, [sessionId]);
 
-    if (!started.session) {
-      setGate({
-        title: "Couldn't start the timer",
-        body: "Try opening the session again from home.",
-        href: "/",
-        cta: "Back home",
-      });
-    }
-  }, [router]);
+  useEffect(() => {
+    boot();
+  }, [boot]);
 
   useEffect(() => {
     if (!session || session.status !== "active") return;
@@ -155,10 +174,34 @@ export function SessionTimer() {
     );
   }
 
+  if (session.status === "pending" && blockPrompt) {
+    return (
+      <PageShell>
+        <Card className="max-w-lg">
+          <h1 className="text-greeting">Another session is running</h1>
+          <p className="text-quote mt-3">
+            Pause the active timer first, then start this block — or open the
+            active one.
+          </p>
+          <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+            <Button onClick={() => router.push(`/session?id=${blockPrompt}`)}>
+              Open active session
+            </Button>
+            <Button variant="secondary" onClick={() => router.push("/")}>
+              Back home
+            </Button>
+          </div>
+        </Card>
+      </PageShell>
+    );
+  }
+
   const elapsed = liveElapsedMs(session, now);
-  const sessionNumber = state.currentIndex + 1;
-  const total = state.queue.length;
-  const progress = total === 0 ? 0 : ((sessionNumber - 1) / total) * 100;
+  const total = state.sessions.length;
+  const doneCount = state.sessions.filter(
+    (s) => s.status === "completed" || s.status === "skipped",
+  ).length;
+  const progress = total === 0 ? 0 : (doneCount / total) * 100;
 
   function onPause(reason: string | null) {
     if (!session || !state) return;
@@ -175,16 +218,12 @@ export function SessionTimer() {
     setSession(next.sessions.find((s) => s.id === session.id) ?? null);
   }
 
-  async function afterQueueStep(next: DaySessionsState) {
-    if (allQueueResolved(next)) {
+  async function afterFinish(next: DaySessionsState) {
+    if (allStudyBlocksResolved(next)) {
       celebrateDayComplete();
       await schedulePostStudyRevisions();
-      router.push("/revision?type=same_day");
-      return;
     }
-    const started = getOrStartCurrentSession(next);
-    setState(started.state);
-    setSession(started.session);
+    router.push("/");
   }
 
   async function onFinish(payload: {
@@ -223,7 +262,7 @@ export function SessionTimer() {
         planDate: session.planDate,
       });
 
-      await afterQueueStep(next);
+      await afterFinish(next);
     } finally {
       setSaving(false);
     }
@@ -235,17 +274,38 @@ export function SessionTimer() {
     try {
       const next = skipSession(state, session.id);
       setState(next);
-      await afterQueueStep(next);
+      await afterFinish(next);
     } finally {
       setSaving(false);
     }
+  }
+
+  if (session.status === "completed" || session.status === "skipped") {
+    return (
+      <PageShell>
+        <Card className="max-w-lg text-center">
+          <h1 className="text-greeting">
+            {session.status === "completed" ? "Session complete" : "Session skipped"}
+          </h1>
+          <p className="text-quote mt-3">
+            {session.subjectName} · {session.topicName}
+          </p>
+          <p className="mt-4 text-pastel-green-deep font-semibold">
+            {formatDuration(session.accumulatedStudyMs)} studied
+          </p>
+          <Button className="mt-6" onClick={() => router.push("/")}>
+            Back home
+          </Button>
+        </Card>
+      </PageShell>
+    );
   }
 
   return (
     <PageShell className="flex flex-1 flex-col">
       <Card className="flex flex-1 flex-col items-center text-center md:min-h-[70vh]">
         <p className="text-caption">
-          Session {sessionNumber} of {total}
+          {doneCount} of {total} blocks done · start any order you like
         </p>
         <h1 className="font-display mt-3 text-2xl font-semibold text-charcoal md:text-3xl">
           {session.subjectName}
@@ -260,7 +320,7 @@ export function SessionTimer() {
         </p>
 
         <div className="mt-6">
-          <CapsuleProgress value={progress + (total ? 100 / total / 2 : 0)} />
+          <CapsuleProgress value={progress} />
         </div>
 
         <p className="text-quote mt-8 max-w-sm">{nudge}</p>
@@ -310,5 +370,19 @@ export function SessionTimer() {
         onSave={(payload) => void onFinish(payload)}
       />
     </PageShell>
+  );
+}
+
+export function SessionTimer() {
+  return (
+    <Suspense
+      fallback={
+        <PageShell>
+          <p className="text-caption">Preparing your session…</p>
+        </PageShell>
+      }
+    >
+      <SessionTimerInner />
+    </Suspense>
   );
 }

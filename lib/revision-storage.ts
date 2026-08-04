@@ -161,22 +161,19 @@ async function syncRevisionToSupabase(revision: LocalRevision) {
   }
 }
 
-/** Call when all planned study sessions are done (completed or skipped). */
-export async function schedulePostStudyRevisions() {
-  const day = loadDaySessions();
-  const topicIds = [
-    ...new Set(
-      day.sessions
-        .filter((s) => s.status === "completed" || s.status === "skipped")
-        .map((s) => s.topicId),
-    ),
-  ];
-  const topicNames = day.queue
-    .filter((q) => topicIds.includes(q.topicId))
-    .map((q) => q.topicName);
+/** Ensure same-day revision exists early (at pledge) so home can show the block. */
+export async function ensureSameDayRevision() {
+  const planDate = getStudyDayKey();
+  const existing = getSameDayRevision(planDate);
+  if (existing) {
+    return refreshRevisionTopics(existing);
+  }
 
-  const planDate = day.planDate || getStudyDayKey();
-  const nextDay = addDays(planDate, 1);
+  const day = loadDaySessions();
+  const topicIds = [...new Set(day.sessions.map((s) => s.topicId))];
+  const topicNames = [
+    ...new Set(day.sessions.map((s) => s.topicName).filter(Boolean)),
+  ];
 
   const sameDay: LocalRevision = {
     id: crypto.randomUUID(),
@@ -192,6 +189,63 @@ export async function schedulePostStudyRevisions() {
   };
   upsertLocalRevision(sameDay);
   await syncRevisionToSupabase(sameDay);
+  invalidateAnalyticsCache();
+  return sameDay;
+}
+
+function refreshRevisionTopics(revision: LocalRevision) {
+  const day = loadDaySessions();
+  const topicIds = [...new Set(day.sessions.map((s) => s.topicId))];
+  const topicNames = [
+    ...new Set(day.sessions.map((s) => s.topicName).filter(Boolean)),
+  ];
+  const updated = { ...revision, topicIds, topicNames };
+  upsertLocalRevision(updated);
+  return updated;
+}
+
+/** Call when study sessions finish or when refreshing end-of-day revisions. */
+export async function schedulePostStudyRevisions() {
+  const day = loadDaySessions();
+  const topicIds = [
+    ...new Set(
+      day.sessions
+        .filter((s) => s.status === "completed" || s.status === "skipped")
+        .map((s) => s.topicId),
+    ),
+  ];
+  const topicNames = [
+    ...new Set(
+      day.sessions
+        .filter((s) => topicIds.includes(s.topicId))
+        .map((s) => s.topicName),
+    ),
+  ];
+
+  const planDate = day.planDate || getStudyDayKey();
+  const nextDay = addDays(planDate, 1);
+
+  const sameDayExisting = getSameDayRevision(planDate);
+  const sameDay: LocalRevision = sameDayExisting
+    ? {
+        ...sameDayExisting,
+        topicIds: topicIds.length ? topicIds : sameDayExisting.topicIds,
+        topicNames: topicNames.length ? topicNames : sameDayExisting.topicNames,
+      }
+    : {
+        id: crypto.randomUUID(),
+        revisionType: "same_day",
+        scheduledFor: planDate,
+        topicIds,
+        topicNames,
+        completedAt: null,
+        studyMs: 0,
+        reflection: "",
+        rangeStart: planDate,
+        rangeEnd: planDate,
+      };
+  upsertLocalRevision(sameDay);
+  if (!sameDayExisting) await syncRevisionToSupabase(sameDay);
 
   const nextDayRev: LocalRevision = {
     id: crypto.randomUUID(),
@@ -208,7 +262,6 @@ export async function schedulePostStudyRevisions() {
   upsertLocalRevision(nextDayRev);
   await syncRevisionToSupabase(nextDayRev);
 
-  // Weekly on Sunday of this week / upcoming Sunday
   if (weekday(planDate) === 0) {
     const weekly: LocalRevision = {
       id: crypto.randomUUID(),

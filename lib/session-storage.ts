@@ -22,21 +22,25 @@ export type PauseRecord = {
   reason: string | null;
 };
 
+export type SessionShift = ShiftSlot | "extra";
+
 export type StudySessionLocal = {
   id: string;
   planDate: string;
-  shift: ShiftSlot;
+  shift: SessionShift;
   subjectName: string;
+  subjectId: string | null;
   topicId: string;
   topicName: string;
-  startedAt: string;
+  isExtra: boolean;
+  startedAt: string | null;
   endedAt: string | null;
   accumulatedStudyMs: number;
   pauseMs: number;
   pauseCount: number;
   pauses: PauseRecord[];
   activePauseStartedAt: string | null;
-  status: "active" | "paused" | "completed" | "skipped";
+  status: "pending" | "active" | "paused" | "completed" | "skipped";
   completionPercent: number | null;
   notesLearned: string;
   notesRemaining: string;
@@ -48,36 +52,138 @@ export type StudySessionLocal = {
 
 export type DaySessionsState = {
   planDate: string;
-  queue: Array<{
+  /** @deprecated kept for migration */
+  queue?: Array<{
     shift: ShiftSlot;
     subjectName: string;
     topicId: string;
     topicName: string;
   }>;
-  currentIndex: number;
+  /** @deprecated kept for migration */
+  currentIndex?: number;
   sessions: StudySessionLocal[];
 };
 
 const KEY = "ririso:sessions";
 
-function activeShiftsFromPlan(plan: DailyPlanLocal) {
+const SHIFT_ORDER: SessionShift[] = [
+  "morning",
+  "second",
+  "third",
+  "additional",
+  "extra",
+];
+
+function plannedFromPlan(plan: DailyPlanLocal) {
   return (Object.entries(plan.shifts) as [ShiftSlot, ShiftSelection][])
     .filter(([, s]) => s.subjectName && s.subjectName !== "None" && s.topicId)
     .map(([shift, s]) => ({
-      shift,
+      shift: shift as SessionShift,
       subjectName: s.subjectName!,
+      subjectId: s.subjectId,
       topicId: s.topicId!,
       topicName: s.topicName!,
+      isExtra: false,
     }));
+}
+
+function makePendingSession(input: {
+  planDate: string;
+  shift: SessionShift;
+  subjectName: string;
+  subjectId: string | null;
+  topicId: string;
+  topicName: string;
+  isExtra?: boolean;
+}): StudySessionLocal {
+  return {
+    id: crypto.randomUUID(),
+    planDate: input.planDate,
+    shift: input.shift,
+    subjectName: input.subjectName,
+    subjectId: input.subjectId,
+    topicId: input.topicId,
+    topicName: input.topicName,
+    isExtra: Boolean(input.isExtra),
+    startedAt: null,
+    endedAt: null,
+    accumulatedStudyMs: 0,
+    pauseMs: 0,
+    pauseCount: 0,
+    pauses: [],
+    activePauseStartedAt: null,
+    status: "pending",
+    completionPercent: null,
+    notesLearned: "",
+    notesRemaining: "",
+    notesQuick: "",
+    notesDoubt: "",
+    notesFact: "",
+    notesMistake: "",
+  };
 }
 
 export function emptyDaySessions(): DaySessionsState {
   return {
     planDate: getStudyDayKey(),
-    queue: [],
-    currentIndex: 0,
     sessions: [],
   };
+}
+
+function normalizeSession(raw: StudySessionLocal): StudySessionLocal {
+  const known: StudySessionLocal["status"][] = [
+    "pending",
+    "active",
+    "paused",
+    "completed",
+    "skipped",
+  ];
+  const status = known.includes(raw.status)
+    ? raw.status
+    : raw.startedAt
+      ? "active"
+      : "pending";
+  return {
+    ...raw,
+    subjectId: raw.subjectId ?? null,
+    isExtra: Boolean(raw.isExtra),
+    startedAt: raw.startedAt ?? null,
+    status,
+  };
+}
+
+function migrateLegacy(parsed: DaySessionsState): DaySessionsState {
+  const planDate = parsed.planDate || getStudyDayKey();
+  if (parsed.sessions?.length) {
+    const sessions = parsed.sessions.map((s) => {
+      const normalized = normalizeSession(s);
+      // Legacy sessions without pending were created active immediately
+      if (
+        !normalized.startedAt &&
+        normalized.status !== "pending" &&
+        normalized.status !== "completed" &&
+        normalized.status !== "skipped"
+      ) {
+        return { ...normalized, status: "pending" as const };
+      }
+      return normalized;
+    });
+    return { planDate, sessions };
+  }
+
+  // Build pending sessions from legacy queue
+  const queue = parsed.queue ?? [];
+  const sessions = queue.map((item) =>
+    makePendingSession({
+      planDate,
+      shift: item.shift,
+      subjectName: item.subjectName,
+      subjectId: null,
+      topicId: item.topicId,
+      topicName: item.topicName,
+    }),
+  );
+  return { planDate, sessions };
 }
 
 export function loadDaySessions(): DaySessionsState {
@@ -87,7 +193,8 @@ export function loadDaySessions(): DaySessionsState {
   try {
     const parsed = JSON.parse(raw) as DaySessionsState;
     if (parsed.planDate !== getStudyDayKey()) return initFromPlan();
-    return reconcileWithPlan(parsed);
+    const migrated = migrateLegacy(parsed);
+    return reconcileWithPlan(migrated);
   } catch {
     return initFromPlan();
   }
@@ -95,45 +202,75 @@ export function loadDaySessions(): DaySessionsState {
 
 export function saveDaySessions(state: DaySessionsState) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(KEY, JSON.stringify(state));
+  const clean: DaySessionsState = {
+    planDate: state.planDate,
+    sessions: state.sessions,
+  };
+  window.localStorage.setItem(KEY, JSON.stringify(clean));
 }
 
-function queueKey(
-  queue: DaySessionsState["queue"],
-): string {
-  return queue.map((i) => `${i.shift}:${i.topicId}`).join("|");
+function sessionKey(s: Pick<StudySessionLocal, "shift" | "topicId" | "isExtra" | "id">) {
+  if (s.isExtra) return `extra:${s.id}`;
+  return `${s.shift}:${s.topicId}`;
 }
 
-/** Rebuild queue from today's plan when it was saved empty/stale before planning finished. */
 function reconcileWithPlan(state: DaySessionsState): DaySessionsState {
   const plan = loadTodayPlan();
-  const desired = activeShiftsFromPlan(plan);
-  if (desired.length === 0) return state;
-
-  const hasResolved = state.sessions.some(
-    (s) => s.status === "completed" || s.status === "skipped",
-  );
-
-  if (state.queue.length === 0) {
-    const next: DaySessionsState = {
-      ...state,
-      queue: desired,
-      currentIndex: Math.min(state.currentIndex, desired.length),
-    };
-    saveDaySessions(next);
-    return next;
+  const desired = plannedFromPlan(plan);
+  if (desired.length === 0 && state.sessions.every((s) => !s.isExtra)) {
+    return state;
   }
 
-  // No progress yet and plan topics changed — rebuild from plan
-  if (!hasResolved && state.currentIndex === 0 && queueKey(state.queue) !== queueKey(desired)) {
-    const next: DaySessionsState = {
-      planDate: getStudyDayKey(),
-      queue: desired,
-      currentIndex: 0,
-      sessions: [],
-    };
-    saveDaySessions(next);
-    return next;
+  const hasProgress = state.sessions.some(
+    (s) =>
+      s.status === "completed" ||
+      s.status === "skipped" ||
+      s.status === "active" ||
+      s.status === "paused" ||
+      (s.accumulatedStudyMs > 0 && s.status !== "pending"),
+  );
+
+  const extras = state.sessions.filter((s) => s.isExtra);
+  const nonExtras = state.sessions.filter((s) => !s.isExtra);
+
+  if (!hasProgress && nonExtras.length === 0 && desired.length > 0) {
+    return initFromPlan();
+  }
+
+  if (!hasProgress) {
+    const desiredKeys = desired.map((d) => `${d.shift}:${d.topicId}`).sort().join("|");
+    const existingKeys = nonExtras
+      .map((s) => `${s.shift}:${s.topicId}`)
+      .sort()
+      .join("|");
+    if (desiredKeys !== existingKeys && desired.length > 0) {
+      const rebuilt = desired.map((d) =>
+        makePendingSession({
+          planDate: getStudyDayKey(),
+          ...d,
+        }),
+      );
+      const next = { planDate: getStudyDayKey(), sessions: [...rebuilt, ...extras] };
+      saveDaySessions(next);
+      return next;
+    }
+  }
+
+  // Add missing planned sessions as pending without wiping progress
+  if (desired.length > 0) {
+    const existing = new Set(nonExtras.map((s) => `${s.shift}:${s.topicId}`));
+    const missing = desired.filter((d) => !existing.has(`${d.shift}:${d.topicId}`));
+    if (missing.length > 0) {
+      const added = missing.map((d) =>
+        makePendingSession({ planDate: state.planDate, ...d }),
+      );
+      const next = {
+        planDate: state.planDate,
+        sessions: [...state.sessions, ...added],
+      };
+      saveDaySessions(next);
+      return next;
+    }
   }
 
   return state;
@@ -141,63 +278,131 @@ function reconcileWithPlan(state: DaySessionsState): DaySessionsState {
 
 export function initFromPlan(): DaySessionsState {
   const plan = loadTodayPlan();
-  const state: DaySessionsState = {
-    planDate: getStudyDayKey(),
-    queue: activeShiftsFromPlan(plan),
-    currentIndex: 0,
-    sessions: [],
-  };
+  const planDate = getStudyDayKey();
+  const sessions = plannedFromPlan(plan).map((d) =>
+    makePendingSession({ planDate, ...d }),
+  );
+  const state: DaySessionsState = { planDate, sessions };
   saveDaySessions(state);
   return state;
 }
 
-/** Call after pledging so the session queue matches the final plan. */
 export function resetQueueFromPlan(): DaySessionsState {
   return initFromPlan();
 }
 
-export function getOrStartCurrentSession(
-  state: DaySessionsState,
-): { state: DaySessionsState; session: StudySessionLocal | null } {
-  const item = state.queue[state.currentIndex];
-  if (!item) return { state, session: null };
-
-  const existing = state.sessions.find(
-    (s) =>
-      s.shift === item.shift &&
-      s.topicId === item.topicId &&
-      s.status !== "completed" &&
-      s.status !== "skipped",
+export function listSessionBlocks(state: DaySessionsState = loadDaySessions()) {
+  return [...state.sessions].sort(
+    (a, b) => SHIFT_ORDER.indexOf(a.shift) - SHIFT_ORDER.indexOf(b.shift),
   );
-  if (existing) return { state, session: existing };
+}
 
-  const session: StudySessionLocal = {
-    id: crypto.randomUUID(),
-    planDate: state.planDate,
-    shift: item.shift,
-    subjectName: item.subjectName,
-    topicId: item.topicId,
-    topicName: item.topicName,
-    startedAt: new Date().toISOString(),
-    endedAt: null,
-    accumulatedStudyMs: 0,
-    pauseMs: 0,
-    pauseCount: 0,
-    pauses: [],
-    activePauseStartedAt: null,
-    status: "active",
-    completionPercent: null,
-    notesLearned: "",
-    notesRemaining: "",
-    notesQuick: "",
-    notesDoubt: "",
-    notesFact: "",
-    notesMistake: "",
-  };
+export function getSessionById(
+  sessionId: string,
+  state: DaySessionsState = loadDaySessions(),
+) {
+  return state.sessions.find((s) => s.id === sessionId) ?? null;
+}
 
+export function getActiveOrPausedSession(
+  state: DaySessionsState = loadDaySessions(),
+) {
+  return (
+    state.sessions.find((s) => s.status === "active") ??
+    state.sessions.find((s) => s.status === "paused") ??
+    null
+  );
+}
+
+export function allStudyBlocksResolved(state: DaySessionsState): boolean {
+  if (state.sessions.length === 0) return false;
+  return state.sessions.every(
+    (s) => s.status === "completed" || s.status === "skipped",
+  );
+}
+
+/** @deprecated use allStudyBlocksResolved */
+export function allQueueResolved(state: DaySessionsState): boolean {
+  return allStudyBlocksResolved(state);
+}
+
+export function addExtraSession(input: {
+  subjectName: string;
+  subjectId: string | null;
+  topicId: string;
+  topicName: string;
+  shift?: SessionShift;
+}): DaySessionsState {
+  const state = loadDaySessions();
+  const session = makePendingSession({
+    planDate: state.planDate || getStudyDayKey(),
+    shift: input.shift ?? "extra",
+    subjectName: input.subjectName,
+    subjectId: input.subjectId,
+    topicId: input.topicId,
+    topicName: input.topicName,
+    isExtra: true,
+  });
   const next = { ...state, sessions: [...state.sessions, session] };
   saveDaySessions(next);
-  return { state: next, session };
+  return next;
+}
+
+export function startSession(
+  state: DaySessionsState,
+  sessionId: string,
+): { state: DaySessionsState; session: StudySessionLocal | null; blockedById?: string } {
+  const target = state.sessions.find((s) => s.id === sessionId);
+  if (!target) return { state, session: null };
+  if (target.status === "completed" || target.status === "skipped") {
+    return { state, session: target };
+  }
+  if (target.status === "active") return { state, session: target };
+  if (target.status === "paused") {
+    const next = resumeSession(state, sessionId);
+    return {
+      state: next,
+      session: next.sessions.find((s) => s.id === sessionId) ?? null,
+    };
+  }
+
+  const otherActive = state.sessions.find(
+    (s) => s.id !== sessionId && s.status === "active",
+  );
+  if (otherActive) {
+    return { state, session: null, blockedById: otherActive.id };
+  }
+
+  const now = new Date().toISOString();
+  const sessions = state.sessions.map((s) =>
+    s.id === sessionId
+      ? {
+          ...s,
+          status: "active" as const,
+          startedAt: now,
+          activePauseStartedAt: null,
+        }
+      : s,
+  );
+  const next = { ...state, sessions };
+  saveDaySessions(next);
+  return { state: next, session: sessions.find((s) => s.id === sessionId) ?? null };
+}
+
+/** Legacy helper — starts/resumes a specific session or first pending. */
+export function getOrStartCurrentSession(
+  state: DaySessionsState,
+  sessionId?: string | null,
+): { state: DaySessionsState; session: StudySessionLocal | null; blockedById?: string } {
+  if (sessionId) return startSession(state, sessionId);
+
+  const open =
+    state.sessions.find((s) => s.status === "active") ??
+    state.sessions.find((s) => s.status === "paused") ??
+    state.sessions.find((s) => s.status === "pending");
+  if (!open) return { state, session: null };
+  if (open.status === "pending") return startSession(state, open.id);
+  return { state, session: open };
 }
 
 export function formatDuration(ms: number): string {
@@ -212,7 +417,11 @@ export function formatDuration(ms: number): string {
 }
 
 export function liveElapsedMs(session: StudySessionLocal, now = Date.now()) {
-  if (session.status === "completed" || session.status === "skipped") {
+  if (
+    session.status === "completed" ||
+    session.status === "skipped" ||
+    session.status === "pending"
+  ) {
     return session.accumulatedStudyMs;
   }
   if (session.status === "paused") {
@@ -227,11 +436,10 @@ function getSegmentStart(session: StudySessionLocal): number {
   if (session.status === "paused" && session.activePauseStartedAt) {
     return new Date(session.activePauseStartedAt).getTime();
   }
-  const lastEndedPause = [...session.pauses]
-    .reverse()
-    .find((p) => p.endedAt);
+  const lastEndedPause = [...session.pauses].reverse().find((p) => p.endedAt);
   if (lastEndedPause?.endedAt) return new Date(lastEndedPause.endedAt).getTime();
-  return new Date(session.startedAt).getTime();
+  if (session.startedAt) return new Date(session.startedAt).getTime();
+  return Date.now();
 }
 
 export function pauseSession(
@@ -270,7 +478,16 @@ export function resumeSession(
   sessionId: string,
 ): DaySessionsState {
   const now = Date.now();
-  const sessions = state.sessions.map((s) => {
+  // Auto-pause any other active session
+  let working = state;
+  const otherActive = working.sessions.find(
+    (s) => s.id !== sessionId && s.status === "active",
+  );
+  if (otherActive) {
+    working = pauseSession(working, otherActive.id, "Switched session");
+  }
+
+  const sessions = working.sessions.map((s) => {
     if (s.id !== sessionId || s.status !== "paused") return s;
     const pauses = s.pauses.map((p, idx) => {
       if (idx !== s.pauses.length - 1 || p.endedAt) return p;
@@ -290,7 +507,7 @@ export function resumeSession(
       pauses,
     };
   });
-  const next = { ...state, sessions };
+  const next = { ...working, sessions };
   saveDaySessions(next);
   return next;
 }
@@ -337,11 +554,7 @@ export function finishSession(
     };
   });
 
-  const next: DaySessionsState = {
-    ...working,
-    sessions,
-    currentIndex: working.currentIndex + 1,
-  };
+  const next: DaySessionsState = { ...working, sessions };
   saveDaySessions(next);
   const finished = next.sessions.find((s) => s.id === sessionId);
   if (finished) archiveSession(finished);
@@ -375,11 +588,7 @@ export function skipSession(
     };
   });
 
-  const next: DaySessionsState = {
-    ...working,
-    sessions,
-    currentIndex: working.currentIndex + 1,
-  };
+  const next: DaySessionsState = { ...working, sessions };
   saveDaySessions(next);
   const skipped = next.sessions.find((s) => s.id === sessionId);
   if (skipped) archiveSession(skipped);
@@ -387,7 +596,4 @@ export function skipSession(
   return next;
 }
 
-export function allQueueResolved(state: DaySessionsState): boolean {
-  if (state.queue.length === 0) return false;
-  return state.currentIndex >= state.queue.length;
-}
+export { sessionKey };

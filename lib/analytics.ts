@@ -310,7 +310,12 @@ export function computeAnalytics(rangeDays = 90): AnalyticsSnapshot {
     if (fr >= 0.85) {
       deepestFocusSessionMs = Math.max(deepestFocusSessionMs, s.accumulatedStudyMs);
     }
-    startHours.push(new Date(s.startedAt).getHours() + new Date(s.startedAt).getMinutes() / 60);
+    if (s.startedAt) {
+      startHours.push(
+        new Date(s.startedAt).getHours() +
+          new Date(s.startedAt).getMinutes() / 60,
+      );
+    }
     if (s.endedAt) {
       endHours.push(new Date(s.endedAt).getHours() + new Date(s.endedAt).getMinutes() / 60);
     }
@@ -340,8 +345,9 @@ export function computeAnalytics(rangeDays = 90): AnalyticsSnapshot {
     if (ok) perfectWeeks += 1;
   }
 
-  const planned = day.queue.length;
-  const plannedMs = planned * 90 * 60 * 1000;
+  const planned = day.sessions.length;
+  // No artificial session length — planning tracks counts, hours are actual only
+  const plannedMs = sumStudy(todaySessions);
 
   const revByType = new Map<string, { total: number; completed: number; studyMs: number }>();
   for (const r of revisions) {
@@ -360,6 +366,7 @@ export function computeAnalytics(rangeDays = 90): AnalyticsSnapshot {
 
   const dayBlocks: AnalyticsSnapshot["dayBlocks"] = {};
   for (const s of sessions) {
+    if (!s.startedAt) continue;
     const blocks = dayBlocks[s.planDate] ?? [];
     blocks.push({
       label: "Study",
@@ -403,6 +410,7 @@ export function computeAnalytics(rangeDays = 90): AnalyticsSnapshot {
     s.planDate.startsWith(month),
   );
   for (const s of monthSessionsForClock) {
+    if (!s.startedAt) continue;
     const h = new Date(s.startedAt).getHours();
     studyClock[h].studyMs += s.accumulatedStudyMs;
     studyClock[h].pauseMs += s.pauseMs;

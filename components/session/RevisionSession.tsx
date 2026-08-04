@@ -13,6 +13,7 @@ import { addDays, getStudyDayKey } from "@/lib/date";
 import { notesGroupedByTopic } from "@/lib/notes-storage";
 import {
   completeRevision,
+  ensureSameDayRevision,
   getRevisionForTodayByType,
   type LocalRevision,
 } from "@/lib/revision-storage";
@@ -50,12 +51,23 @@ export function RevisionSession() {
   const [sparkle, setSparkle] = useState(false);
 
   useEffect(() => {
-    const found = getRevisionForTodayByType(type);
-    setRevision(found);
-    setStatus("active");
-    setAccumulatedMs(0);
-    setSegmentStart(Date.now());
-    setReflection(found?.reflection ?? "");
+    let cancelled = false;
+    async function load() {
+      let found = getRevisionForTodayByType(type);
+      if (!found && type === "same_day") {
+        found = await ensureSameDayRevision();
+      }
+      if (cancelled) return;
+      setRevision(found);
+      setStatus("active");
+      setAccumulatedMs(0);
+      setSegmentStart(Date.now());
+      setReflection(found?.reflection ?? "");
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, [type]);
 
   useEffect(() => {
@@ -84,8 +96,8 @@ export function RevisionSession() {
         <Card>
           <h1 className="text-greeting">Revision</h1>
           <p className="text-quote mt-3">
-            Finish today&apos;s study sessions first — revision will appear
-            softly afterward.
+            No revision block for this type yet. Pledge today&apos;s plan first,
+            or open Daily Revision from home anytime after pledging.
           </p>
           <Button className="mt-6" onClick={() => router.push("/")}>
             Back home

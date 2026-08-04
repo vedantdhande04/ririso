@@ -15,6 +15,7 @@ import {
   type DailyPlanLocal,
 } from "@/lib/planning-storage";
 import { resetQueueFromPlan } from "@/lib/session-storage";
+import { ensureSameDayRevision } from "@/lib/revision-storage";
 
 export default function CommitPage() {
   const router = useRouter();
@@ -41,7 +42,8 @@ export default function CommitPage() {
     };
     saveTodayPlan(next);
     resetQueueFromPlan();
-    router.push("/session");
+    void ensureSameDayRevision();
+    router.push("/");
   }
 
   if (!plan) return null;
