@@ -14,13 +14,13 @@ import {
 } from "recharts";
 
 import { Doodle } from "@/components/doodles/Doodle";
+import { StudyHeatmap } from "@/components/analytics/StudyHeatmap";
 import { PageShell } from "@/components/layout/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { hoursLabel, type AnalyticsSnapshot } from "@/lib/analytics";
 import { getAnalyticsSnapshot } from "@/lib/analytics-cache";
 
-const GREENS = ["#E8F5EC", "#C9E6D1", "#B8D8C0", "#7FAD8C", "#5F8F6C"];
 const SUBJECT_COLORS = [
   "#F3CFD8",
   "#B8D8C0",
@@ -55,7 +55,6 @@ function hourLabel(h: number | null) {
 export function AnalyticsDashboard() {
   const [data, setData] = useState<AnalyticsSnapshot | null>(null);
   const [range, setRange] = useState<RangeKey>(30);
-  const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const [showDeep, setShowDeep] = useState(false);
   const [replayDay, setReplayDay] = useState<string | null>(null);
 
@@ -69,11 +68,6 @@ export function AnalyticsDashboard() {
     return data.trend.slice(-range);
   }, [data, range]);
 
-  const maxHeat = useMemo(() => {
-    if (!data) return 1;
-    return Math.max(...data.heatmap.map((h) => h.hours), 0.01);
-  }, [data]);
-
   if (!data) {
     return (
       <PageShell>
@@ -82,7 +76,6 @@ export function AnalyticsDashboard() {
     );
   }
 
-  const dayBlocks = selectedDay ? (data.dayBlocks[selectedDay] ?? []) : [];
   const replayBlocks = replayDay ? (data.dayBlocks[replayDay] ?? []) : [];
 
   return (
@@ -114,73 +107,7 @@ export function AnalyticsDashboard() {
 
       <section className="mt-6 grid items-start gap-4 lg:grid-cols-2">
         <Card doodle={<Doodle name="leaf" size={28} />}>
-          <h2 className="font-display text-lg font-semibold text-charcoal">
-            Study heatmap
-          </h2>
-          <p className="text-caption mt-1">Tap a day to expand its story.</p>
-          <div className="mt-3 inline-grid max-w-full grid-cols-7 gap-[3px]">
-            {data.heatmap.slice(-84).map((day) => {
-              const intensity = day.hours / maxHeat;
-              const level =
-                day.hours <= 0
-                  ? 0
-                  : intensity < 0.25
-                    ? 1
-                    : intensity < 0.5
-                      ? 2
-                      : intensity < 0.75
-                        ? 3
-                        : 4;
-              return (
-                <button
-                  key={day.date}
-                  type="button"
-                  title={`${day.date}: ${day.hours}h`}
-                  onClick={() =>
-                    setSelectedDay((prev) =>
-                      prev === day.date ? null : day.date,
-                    )
-                  }
-                  className={`h-2.5 w-2.5 rounded-[3px] border border-border-soft/40 transition hover:scale-125 sm:h-3 sm:w-3 ${
-                    selectedDay === day.date
-                      ? "ring-1 ring-pastel-green-deep ring-offset-1"
-                      : ""
-                  }`}
-                  style={{ backgroundColor: GREENS[level] }}
-                />
-              );
-            })}
-          </div>
-          {selectedDay ? (
-            <div className="mt-3 rounded-[18px] border border-border-soft bg-ivory/70 p-3">
-              <p className="text-sm font-semibold text-charcoal">{selectedDay}</p>
-              <ul className="soft-scroll mt-2 max-h-40 space-y-2 overflow-y-auto">
-                {dayBlocks.length === 0 ? (
-                  <li className="text-caption">A quiet day.</li>
-                ) : (
-                  dayBlocks.map((b, i) => (
-                    <li key={`${b.start}-${i}`} className="text-caption">
-                      <span
-                        className={
-                          b.kind === "study"
-                            ? "text-pastel-green-deep"
-                            : b.kind === "revision"
-                              ? "text-pastel-lavender-deep"
-                              : "text-muted"
-                        }
-                      >
-                        {b.kind === "study" ? "████" : b.kind === "pause" ? "░░░░" : "····"}
-                      </span>{" "}
-                      {b.label}
-                      {b.subjectName ? ` · ${b.subjectName}` : ""}
-                      {b.topicName ? ` · ${b.topicName}` : ""} ·{" "}
-                      {hoursLabel(b.ms)}
-                    </li>
-                  ))
-                )}
-              </ul>
-            </div>
-          ) : null}
+          <StudyHeatmap data={data} />
         </Card>
 
         <Card>
@@ -190,7 +117,7 @@ export function AnalyticsDashboard() {
           <p className="text-quote mt-2">
             Study {data.focus.studyPct}% · Break {data.focus.pausePct}%
           </p>
-          <div className="mt-3 h-40 sm:h-44">
+          <div className="mt-3 flex h-44 items-center justify-center sm:h-48">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
@@ -199,8 +126,8 @@ export function AnalyticsDashboard() {
                     { name: "Break", value: data.focus.pauseMs || 0.01 },
                   ]}
                   dataKey="value"
-                  innerRadius={42}
-                  outerRadius={62}
+                  innerRadius={48}
+                  outerRadius={70}
                   paddingAngle={4}
                 >
                   <Cell fill="#7FAD8C" />

@@ -39,7 +39,7 @@ export function getAnalyticsSnapshot(force = false): AnalyticsSnapshot {
       if (age < 60_000) return cached;
     }
   }
-  const live = computeAnalytics(90);
+  const live = computeAnalytics(400);
   writeAnalyticsCache(live);
   return live;
 }
