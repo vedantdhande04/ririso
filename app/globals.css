@@ -1,0 +1,275 @@
+@import "tailwindcss";
+
+/* -------------------------------------------------------------------------- */
+/* Design tokens — soft cozy journal (PRD §23)                                */
+/* -------------------------------------------------------------------------- */
+
+:root {
+  /* Backgrounds */
+  --bg-warm-white: #fffdf9;
+  --bg-ivory: #faf6ef;
+  --bg-cream: #f7f1e8;
+
+  /* Accents */
+  --pastel-green: #b8d8c0;
+  --pastel-green-deep: #7fad8c;
+  --pastel-pink: #f3cfd8;
+  --pastel-pink-deep: #d9a0ae;
+  --pastel-yellow: #f5e6b8;
+  --pastel-yellow-deep: #d9c57a;
+  --pastel-lavender: #ddd0ef;
+  --pastel-lavender-deep: #b5a3d4;
+
+  /* Text — soft charcoal, never pure black */
+  --text-charcoal: #3d3a37;
+  --text-muted: #7a736c;
+  --text-soft: #a39c94;
+
+  /* Surfaces */
+  --surface-paper: #fffefb;
+  --border-soft: #ebe4da;
+  --shadow-soft: 0 8px 28px rgba(61, 58, 55, 0.06);
+
+  /* Semantic aliases */
+  --background: var(--bg-warm-white);
+  --foreground: var(--text-charcoal);
+  --accent-complete: var(--pastel-green);
+  --accent-active: var(--pastel-green-deep);
+  --accent-button: var(--pastel-pink);
+  --accent-highlight: var(--pastel-yellow);
+  --accent-analytics: var(--pastel-lavender);
+
+  /* Radii (PRD) */
+  --radius-button: 24px;
+  --radius-card: 24px;
+  --radius-input: 18px;
+  --radius-popup: 30px;
+
+  /* Touch */
+  --touch-min: 44px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-warm-white: var(--bg-warm-white);
+  --color-ivory: var(--bg-ivory);
+  --color-cream: var(--bg-cream);
+  --color-pastel-green: var(--pastel-green);
+  --color-pastel-green-deep: var(--pastel-green-deep);
+  --color-pastel-pink: var(--pastel-pink);
+  --color-pastel-pink-deep: var(--pastel-pink-deep);
+  --color-pastel-yellow: var(--pastel-yellow);
+  --color-pastel-yellow-deep: var(--pastel-yellow-deep);
+  --color-pastel-lavender: var(--pastel-lavender);
+  --color-pastel-lavender-deep: var(--pastel-lavender-deep);
+  --color-charcoal: var(--text-charcoal);
+  --color-muted: var(--text-muted);
+  --color-soft: var(--text-soft);
+  --color-paper: var(--surface-paper);
+  --color-border-soft: var(--border-soft);
+  --font-sans: var(--font-nunito);
+  --font-display: var(--font-quicksand);
+  --shadow-soft: var(--shadow-soft);
+  --radius-button: var(--radius-button);
+  --radius-card: var(--radius-card);
+  --radius-input: var(--radius-input);
+  --radius-popup: var(--radius-popup);
+}
+
+html {
+  overflow-x: hidden;
+}
+
+body {
+  background:
+    radial-gradient(
+      ellipse 120% 80% at 10% -10%,
+      var(--pastel-pink) 0%,
+      transparent 45%
+    ),
+    radial-gradient(
+      ellipse 100% 60% at 100% 0%,
+      var(--pastel-yellow) 0%,
+      transparent 40%
+    ),
+    linear-gradient(180deg, var(--bg-warm-white) 0%, var(--bg-ivory) 100%);
+  background-attachment: fixed;
+  color: var(--foreground);
+  font-family: var(--font-nunito), system-ui, sans-serif;
+  min-height: 100%;
+  overflow-x: hidden;
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Typography helpers */
+.text-greeting {
+  font-family: var(--font-quicksand), var(--font-nunito), sans-serif;
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: var(--text-charcoal);
+}
+
+@media (min-width: 768px) {
+  .text-greeting {
+    font-size: 2.25rem;
+  }
+}
+
+.text-quote {
+  font-family: var(--font-nunito), sans-serif;
+  font-size: 1rem;
+  font-style: italic;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+@media (min-width: 768px) {
+  .text-quote {
+    font-size: 1.125rem;
+  }
+}
+
+.text-caption {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* Touch target helper */
+.touch-target {
+  min-height: var(--touch-min);
+  min-width: var(--touch-min);
+}
+
+/* Motion */
+@keyframes soft-bounce {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(0.96);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes popup-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes sparkle {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+@keyframes bloom {
+  from {
+    stroke-dashoffset: 100;
+    opacity: 0.6;
+  }
+  to {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+.animate-soft-bounce {
+  animation: soft-bounce 220ms ease;
+}
+
+.animate-card-enter {
+  animation: card-enter 280ms ease-out;
+}
+
+.animate-popup-in {
+  animation: popup-in 240ms ease-out;
+}
+
+.animate-sparkle {
+  animation: sparkle 280ms ease-out;
+}
+
+@keyframes ririso-petal-fall {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--drift, 20px), 110vh, 0) rotate(240deg);
+    opacity: 0;
+  }
+}
+
+.ririso-petal {
+  animation-name: ririso-petal-fall;
+  animation-timing-function: ease-in;
+  animation-fill-mode: forwards;
+}
+
+@keyframes bloom-ring {
+  from {
+    opacity: 0.55;
+    filter: blur(0.5px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+.animate-bloom {
+  animation: bloom-ring 280ms ease-out;
+}
+
+@keyframes slide-completed {
+  from {
+    opacity: 0.4;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-completed {
+  animation: slide-completed 260ms ease-out;
+}
