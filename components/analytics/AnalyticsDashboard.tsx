@@ -110,7 +110,7 @@ export function AnalyticsDashboard() {
           <StudyHeatmap data={data} />
         </Card>
 
-        <Card>
+        <Card doodle={<Doodle name="ring" size={30} />}>
           <h2 className="font-display text-lg font-semibold text-charcoal">
             Focus
           </h2>

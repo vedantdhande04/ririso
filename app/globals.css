@@ -187,6 +187,24 @@ body {
 }
 
 /* Motion */
+@keyframes soft-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+.animate-soft-float {
+  animation: soft-float 7s ease-in-out infinite;
+}
+
+.animate-soft-float-delayed {
+  animation: soft-float 8.5s ease-in-out 1.2s infinite;
+}
+
 @keyframes soft-bounce {
   0% {
     transform: scale(1);

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 
+import { Doodle } from "@/components/doodles/Doodle";
 import { PageShell } from "@/components/layout/PageShell";
 import { Card } from "@/components/ui/Card";
 import { getStudyDayKey } from "@/lib/date";
@@ -79,7 +80,7 @@ export function PlannerCalendar() {
       </header>
 
       <div className="mt-6 grid gap-4 md:grid-cols-[1.4fr_1fr]">
-        <Card>
+        <Card doodle={<Doodle name="spark" size={30} />}>
           <div className="flex items-center justify-between gap-3">
             <button
               type="button"

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { Doodle } from "@/components/doodles/Doodle";
 import { PageShell } from "@/components/layout/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -150,7 +151,10 @@ export function RevisionSession() {
   return (
     <PageShell>
       <div className="grid gap-4 md:grid-cols-[1.2fr_1fr]">
-        <Card className="text-center md:min-h-[60vh]">
+        <Card
+          className="text-center md:min-h-[60vh]"
+          doodle={<Doodle name="book" size={32} />}
+        >
           <p className="text-caption">{TITLES[type] ?? "Revision"}</p>
           <h1 className="text-greeting mt-2">Gently revisit</h1>
           <p

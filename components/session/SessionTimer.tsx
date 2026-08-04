@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 import { FinishSessionModal } from "@/components/session/FinishSessionModal";
 import { PauseReasonPicker } from "@/components/session/PauseReasonPicker";
+import { Doodle } from "@/components/doodles/Doodle";
 import { PageShell } from "@/components/layout/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
@@ -398,7 +399,10 @@ function SessionTimerInner() {
 
   return (
     <PageShell className="flex flex-1 flex-col">
-      <Card className="flex flex-1 flex-col items-center text-center md:min-h-[70vh]">
+      <Card
+        className="flex flex-1 flex-col items-center text-center md:min-h-[70vh]"
+        doodle={<Doodle name="mug" size={32} />}
+      >
         <p className="text-caption">
           {doneCount} of {total} blocks done · timer keeps running if you leave
         </p>

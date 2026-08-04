@@ -247,7 +247,7 @@ export function HomeDashboard() {
               </p>
             </div>
           </Card>
-          <Card>
+          <Card doodle={<Doodle name="mug" size={30} />}>
             <p className="text-caption">Hours studied today</p>
             <p className="font-display mt-1 text-2xl font-semibold text-pastel-green-deep">
               {hoursLabel}
@@ -263,7 +263,7 @@ export function HomeDashboard() {
             </p>
             <p className="text-caption mt-2">{supportive.streakAlive}</p>
           </Card>
-          <Card>
+          <Card doodle={<Doodle name="heart" size={28} />}>
             <p className="text-caption">Calendar alerts</p>
             {yesterdayRevision ? (
               <Link
