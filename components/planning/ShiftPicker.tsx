@@ -4,7 +4,7 @@ type ShiftPickerProps = {
   label: string;
   options: readonly string[];
   value: string | null;
-  onChange: (value: string) => void;
+  onChange: (value: string | null) => void;
 };
 
 export function ShiftPicker({
@@ -25,7 +25,8 @@ export function ShiftPicker({
             <button
               key={option}
               type="button"
-              onClick={() => onChange(option)}
+              aria-pressed={selected}
+              onClick={() => onChange(selected ? null : option)}
               className={`touch-target rounded-[var(--radius-button)] px-4 py-3 text-left text-sm font-semibold transition-transform duration-200 hover:scale-[1.02] active:scale-[0.98] ${
                 selected
                   ? "border-2 border-pastel-green-deep bg-pastel-green/50 text-charcoal"

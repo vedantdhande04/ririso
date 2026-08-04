@@ -12,19 +12,23 @@ import { Card } from "@/components/ui/Card";
 import { CapsuleProgress } from "@/components/ui/CapsuleProgress";
 import { updateTopicProgress } from "@/lib/catalog";
 import { celebrateDayComplete } from "@/lib/confetti";
-import { timerNudge } from "@/lib/copy";
+import { shiftLabels, timerNudge } from "@/lib/copy";
 import { saveSessionNotes, type SessionNotes } from "@/lib/notes-storage";
 import { schedulePostStudyRevisions } from "@/lib/revision-storage";
 import {
   allStudyBlocksResolved,
+  beginSessionNavigation,
   finishSession,
   formatDuration,
+  getOpenSession,
   getOrStartCurrentSession,
   getSessionById,
+  listSessionBlocks,
   liveElapsedMs,
   loadDaySessions,
   pauseSession,
   resumeSession,
+  sessionHref,
   skipSession,
   type DaySessionsState,
   type StudySessionLocal,
@@ -50,6 +54,7 @@ function SessionTimerInner() {
   const [state, setState] = useState<DaySessionsState | null>(null);
   const [session, setSession] = useState<StudySessionLocal | null>(null);
   const [gate, setGate] = useState<GateMessage | null>(null);
+  const [picker, setPicker] = useState<StudySessionLocal[] | null>(null);
   const [blockPrompt, setBlockPrompt] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [showPauseReasons, setShowPauseReasons] = useState(false);
@@ -74,6 +79,9 @@ function SessionTimerInner() {
         href: active > 0 ? "/commit" : "/",
         cta: active > 0 ? "Go to pledge" : "Back home",
       });
+      setPicker(null);
+      setSession(null);
+      setState(null);
       return;
     }
 
@@ -84,29 +92,43 @@ function SessionTimerInner() {
         href: "/calendar",
         cta: "Open planner",
       });
+      setPicker(null);
+      setSession(null);
+      setState(null);
       return;
     }
 
-    let day = loadDaySessions();
-    if (day.sessions.length === 0 && active > 0) {
-      day = loadDaySessions();
+    const day = loadDaySessions();
+    const open = getOpenSession(day);
+
+    // Navbar / bare /session → resume the live block with a stable URL
+    if (!sessionId && open) {
+      router.replace(sessionHref(open.id));
+      return;
     }
 
     if (sessionId) {
       const existing = getSessionById(sessionId, day);
       if (!existing) {
+        if (open) {
+          router.replace(sessionHref(open.id));
+          return;
+        }
         setGate({
           title: "Session not found",
           body: "That block isn't in today's plan anymore.",
           href: "/",
           cta: "Back home",
         });
+        setPicker(null);
         return;
       }
-      if (existing.status === "completed") {
+      if (existing.status === "completed" || existing.status === "skipped") {
         setState(day);
         setSession(existing);
         setGate(null);
+        setPicker(null);
+        setBlockPrompt(null);
         return;
       }
       const started = getOrStartCurrentSession(day, sessionId);
@@ -115,33 +137,56 @@ function SessionTimerInner() {
         setSession(getSessionById(sessionId, started.state));
         setBlockPrompt(started.blockedById);
         setGate(null);
+        setPicker(null);
         return;
       }
       setState(started.state);
       setSession(started.session);
       setGate(null);
+      setPicker(null);
       setBlockPrompt(null);
       return;
     }
 
-    const open = getOrStartCurrentSession(day);
-    if (!open.session) {
-      setGate({
-        title: "Pick a session block",
-        body: "Start any block from home — there's no required order.",
-        href: "/",
-        cta: "Back home",
-      });
-      return;
-    }
-    setState(open.state);
-    setSession(open.session);
+    // No open session — show picker of today's blocks
+    const blocks = listSessionBlocks(day).filter(
+      (s) => s.status !== "completed" && s.status !== "skipped",
+    );
+    setState(day);
+    setSession(null);
     setGate(null);
-  }, [sessionId]);
+    setBlockPrompt(null);
+    setPicker(blocks.length > 0 ? blocks : []);
+  }, [sessionId, router]);
 
   useEffect(() => {
     boot();
   }, [boot]);
+
+  // Keep wall-clock timer accurate after tab switch / browser reopen
+  useEffect(() => {
+    function syncFromStorage() {
+      setNow(Date.now());
+      if (!sessionId) {
+        boot();
+        return;
+      }
+      const day = loadDaySessions();
+      const latest = getSessionById(sessionId, day);
+      if (latest) {
+        setState(day);
+        setSession(latest);
+      }
+    }
+    window.addEventListener("focus", syncFromStorage);
+    document.addEventListener("visibilitychange", syncFromStorage);
+    window.addEventListener("ririso:sessions-changed", syncFromStorage);
+    return () => {
+      window.removeEventListener("focus", syncFromStorage);
+      document.removeEventListener("visibilitychange", syncFromStorage);
+      window.removeEventListener("ririso:sessions-changed", syncFromStorage);
+    };
+  }, [boot, sessionId]);
 
   useEffect(() => {
     if (!session || session.status !== "active") return;
@@ -166,6 +211,56 @@ function SessionTimerInner() {
     );
   }
 
+  if (picker) {
+    return (
+      <PageShell>
+        <Card className="max-w-lg">
+          <h1 className="text-greeting">Choose a session</h1>
+          <p className="text-quote mt-3">
+            Start any block — your timer keeps running if you leave and come
+            back.
+          </p>
+          {picker.length === 0 ? (
+            <p className="text-caption mt-4">
+              No open study blocks. Add one from home, or enjoy a quiet pause.
+            </p>
+          ) : (
+            <ul className="mt-5 space-y-2">
+              {picker.map((block) => (
+                <li key={block.id}>
+                  <button
+                    type="button"
+                    className="touch-target flex w-full flex-col rounded-[18px] border border-border-soft bg-ivory/70 px-4 py-3 text-left transition hover:bg-pastel-pink/30"
+                    onClick={() => {
+                      const nav = beginSessionNavigation(block.id);
+                      router.push(nav.href);
+                    }}
+                  >
+                    <span className="text-caption">
+                      {shiftLabels[block.shift] ?? block.shift}
+                      {block.status === "paused" ? " · Paused" : ""}
+                    </span>
+                    <span className="font-display font-semibold text-charcoal">
+                      {block.subjectName}
+                    </span>
+                    <span className="text-caption truncate">{block.topicName}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Button
+            variant="ghost"
+            className="mt-4 w-full"
+            onClick={() => router.push("/")}
+          >
+            Back home
+          </Button>
+        </Card>
+      </PageShell>
+    );
+  }
+
   if (!state || !session) {
     return (
       <PageShell>
@@ -184,7 +279,7 @@ function SessionTimerInner() {
             active one.
           </p>
           <div className="mt-6 flex flex-col gap-2 sm:flex-row">
-            <Button onClick={() => router.push(`/session?id=${blockPrompt}`)}>
+            <Button onClick={() => router.push(sessionHref(blockPrompt))}>
               Open active session
             </Button>
             <Button variant="secondary" onClick={() => router.push("/")}>
@@ -305,7 +400,7 @@ function SessionTimerInner() {
     <PageShell className="flex flex-1 flex-col">
       <Card className="flex flex-1 flex-col items-center text-center md:min-h-[70vh]">
         <p className="text-caption">
-          {doneCount} of {total} blocks done · start any order you like
+          {doneCount} of {total} blocks done · timer keeps running if you leave
         </p>
         <h1 className="font-display mt-3 text-2xl font-semibold text-charcoal md:text-3xl">
           {session.subjectName}

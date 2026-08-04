@@ -207,6 +207,7 @@ export function saveDaySessions(state: DaySessionsState) {
     sessions: state.sessions,
   };
   window.localStorage.setItem(KEY, JSON.stringify(clean));
+  window.dispatchEvent(new Event("ririso:sessions-changed"));
 }
 
 function sessionKey(s: Pick<StudySessionLocal, "shift" | "topicId" | "isExtra" | "id">) {
@@ -314,6 +315,15 @@ export function getActiveOrPausedSession(
   );
 }
 
+/** Active or paused session only — never auto-starts a pending block. */
+export function getOpenSession(state: DaySessionsState = loadDaySessions()) {
+  return getActiveOrPausedSession(state);
+}
+
+export function sessionHref(sessionId?: string | null) {
+  return sessionId ? `/session?id=${sessionId}` : "/session";
+}
+
 export function allStudyBlocksResolved(state: DaySessionsState): boolean {
   if (state.sessions.length === 0) return false;
   return state.sessions.every(
@@ -389,20 +399,36 @@ export function startSession(
   return { state: next, session: sessions.find((s) => s.id === sessionId) ?? null };
 }
 
-/** Legacy helper — starts/resumes a specific session or first pending. */
+/** Start/resume a specific session. Without id, opens active/paused only (no auto-start). */
 export function getOrStartCurrentSession(
   state: DaySessionsState,
   sessionId?: string | null,
 ): { state: DaySessionsState; session: StudySessionLocal | null; blockedById?: string } {
   if (sessionId) return startSession(state, sessionId);
 
-  const open =
-    state.sessions.find((s) => s.status === "active") ??
-    state.sessions.find((s) => s.status === "paused") ??
-    state.sessions.find((s) => s.status === "pending");
+  const open = getOpenSession(state);
   if (!open) return { state, session: null };
-  if (open.status === "pending") return startSession(state, open.id);
   return { state, session: open };
+}
+
+/** Persist-start a session then return the href to open it. */
+export function beginSessionNavigation(sessionId: string): {
+  href: string;
+  blockedById?: string;
+  session: StudySessionLocal | null;
+} {
+  const result = startSession(loadDaySessions(), sessionId);
+  if (result.blockedById) {
+    return {
+      href: sessionHref(result.blockedById),
+      blockedById: result.blockedById,
+      session: result.session,
+    };
+  }
+  return {
+    href: sessionHref(sessionId),
+    session: result.session,
+  };
 }
 
 export function formatDuration(ms: number): string {

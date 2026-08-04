@@ -33,6 +33,7 @@ import {
   listSessionBlocks,
   liveElapsedMs,
   loadDaySessions,
+  sessionHref,
   type StudySessionLocal,
 } from "@/lib/session-storage";
 
@@ -155,7 +156,7 @@ export function HomeDashboard() {
         setCta({ href: "/calendar", label: "Browse your planner" });
       } else if (current) {
         setCta({
-          href: `/session?id=${current.id}`,
+          href: sessionHref(current.id),
           label: current.status === "paused" ? "Resume session" : "Open timer",
         });
       } else if (

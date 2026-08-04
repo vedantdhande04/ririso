@@ -17,6 +17,7 @@ import { isPastPlanningGate } from "@/lib/date";
 import {
   createTopic,
   fetchCatalog,
+  renameTopic,
   subjectsForShift,
   type CatalogSubject,
 } from "@/lib/catalog";
@@ -119,8 +120,20 @@ export function PlanningGate() {
     return subjectsForShift(catalog, shift).find((s) => s.name === subjectName);
   }
 
-  function updateShift(shift: ShiftSlot, subjectName: string) {
+  function updateShift(shift: ShiftSlot, subjectName: string | null) {
     setPlan((prev) => {
+      if (!subjectName) {
+        const next: DailyPlanLocal = {
+          ...prev,
+          shifts: {
+            ...prev.shifts,
+            [shift]: emptyShift(),
+          },
+        };
+        saveTodayPlan(next);
+        return next;
+      }
+
       if (subjectName === "None") {
         const next: DailyPlanLocal = {
           ...prev,
@@ -151,8 +164,24 @@ export function PlanningGate() {
     });
   }
 
-  function updateTopic(shift: ShiftSlot, topicId: string, topicName?: string) {
+  function updateTopic(shift: ShiftSlot, topicId: string | null, topicName?: string) {
     setPlan((prev) => {
+      if (!topicId) {
+        const next: DailyPlanLocal = {
+          ...prev,
+          shifts: {
+            ...prev.shifts,
+            [shift]: {
+              ...prev.shifts[shift],
+              topicId: null,
+              topicName: null,
+            },
+          },
+        };
+        saveTodayPlan(next);
+        return next;
+      }
+
       const subject = catalog.find((s) => s.id === prev.shifts[shift].subjectId);
       const topic =
         topicName != null
@@ -166,6 +195,37 @@ export function PlanningGate() {
             ...prev.shifts[shift],
             topicId,
             topicName: topic?.name ?? null,
+          },
+        },
+      };
+      saveTodayPlan(next);
+      return next;
+    });
+  }
+
+  async function handleRenameTopic(
+    shift: ShiftSlot,
+    topicId: string,
+    name: string,
+  ) {
+    const updated = await renameTopic(topicId, name);
+    setCatalog((prev) =>
+      prev.map((subject) => ({
+        ...subject,
+        topics: subject.topics.map((t) =>
+          t.id === topicId ? { ...t, name: updated.name } : t,
+        ),
+      })),
+    );
+    setPlan((prev) => {
+      if (prev.shifts[shift].topicId !== topicId) return prev;
+      const next: DailyPlanLocal = {
+        ...prev,
+        shifts: {
+          ...prev.shifts,
+          [shift]: {
+            ...prev.shifts[shift],
+            topicName: updated.name,
           },
         },
       };
@@ -251,6 +311,9 @@ export function PlanningGate() {
                   creating={creatingTopicFor === key}
                   onChange={(topicId) => updateTopic(key, topicId)}
                   onCreate={(name) => handleCreateTopic(key, name)}
+                  onRename={(topicId, name) =>
+                    handleRenameTopic(key, topicId, name)
+                  }
                 />
               ) : selection.subjectName &&
                 selection.subjectName !== "None" &&

@@ -15,6 +15,7 @@ import {
 import {
   createTopic,
   fetchCatalog,
+  renameTopic,
   subjectsForShift,
   type CatalogSubject,
 } from "@/lib/catalog";
@@ -69,11 +70,12 @@ export function ExtraSessionModal({
   onAdded,
 }: ExtraSessionModalProps) {
   const [catalog, setCatalog] = useState<CatalogSubject[]>([]);
-  const [shiftLabel, setShiftLabel] = useState<(typeof SHIFT_OPTIONS)[number]>("Extra");
+  const [shiftLabel, setShiftLabel] = useState<(typeof SHIFT_OPTIONS)[number] | null>("Extra");
   const [subjectName, setSubjectName] = useState<string | null>(null);
   const [topicId, setTopicId] = useState<string | null>(null);
   const [topicName, setTopicName] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -91,13 +93,13 @@ export function ExtraSessionModal({
   }, [open]);
 
   const subjectOptions = useMemo(
-    () => subjectOptionsFor(shiftLabel),
+    () => subjectOptionsFor(shiftLabel ?? "Extra"),
     [shiftLabel],
   );
 
   const subject = useMemo(() => {
     if (!subjectName) return null;
-    const shift = shiftMap[shiftLabel];
+    const shift = shiftLabel ? shiftMap[shiftLabel] : "extra";
     if (shift === "extra") {
       return catalog.find((s) => s.name === subjectName) ?? null;
     }
@@ -125,6 +127,24 @@ export function ExtraSessionModal({
     }
   }
 
+  async function handleRenameTopic(id: string, name: string) {
+    setRenaming(true);
+    try {
+      const updated = await renameTopic(id, name);
+      setCatalog((prev) =>
+        prev.map((s) => ({
+          ...s,
+          topics: s.topics.map((t) =>
+            t.id === id ? { ...t, name: updated.name } : t,
+          ),
+        })),
+      );
+      if (topicId === id) setTopicName(updated.name);
+    } finally {
+      setRenaming(false);
+    }
+  }
+
   function save() {
     if (!subjectName || !topicId || !topicName) {
       setError("Choose a subject and topic");
@@ -135,7 +155,7 @@ export function ExtraSessionModal({
       subjectId: subject?.id ?? null,
       topicId,
       topicName,
-      shift: shiftMap[shiftLabel],
+      shift: shiftLabel ? shiftMap[shiftLabel] : "extra",
     });
     onAdded();
     onClose();
@@ -156,7 +176,7 @@ export function ExtraSessionModal({
           options={SHIFT_OPTIONS}
           value={shiftLabel}
           onChange={(value) => {
-            setShiftLabel(value as (typeof SHIFT_OPTIONS)[number]);
+            setShiftLabel(value as (typeof SHIFT_OPTIONS)[number] | null);
             setSubjectName(null);
             setTopicId(null);
             setTopicName(null);
@@ -178,13 +198,19 @@ export function ExtraSessionModal({
           <TopicSelector
             topics={subject.topics}
             value={topicId}
-            creating={creating}
+            creating={creating || renaming}
             onChange={(id) => {
+              if (!id) {
+                setTopicId(null);
+                setTopicName(null);
+                return;
+              }
               const topic = subject.topics.find((t) => t.id === id);
               setTopicId(id);
               setTopicName(topic?.name ?? null);
             }}
             onCreate={handleCreateTopic}
+            onRename={handleRenameTopic}
           />
         ) : null}
       </div>

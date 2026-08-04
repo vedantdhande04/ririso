@@ -30,7 +30,9 @@ export function PauseReasonPicker({
           <Button
             key={reason}
             variant={picked === reason ? "selected" : "secondary"}
-            onClick={() => setPicked(reason)}
+            onClick={() =>
+              setPicked((prev) => (prev === reason ? null : reason))
+            }
           >
             {reason}
           </Button>

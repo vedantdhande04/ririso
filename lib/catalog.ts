@@ -110,6 +110,28 @@ export async function createTopic(
   return mapTopic(data);
 }
 
+export async function renameTopic(
+  topicId: string,
+  name: string,
+): Promise<CatalogTopic> {
+  const supabase = createBrowserClient();
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Topic name is required");
+
+  const { data, error } = await supabase
+    .from("topics")
+    .update({
+      name: trimmed,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", topicId)
+    .select("id, name, completion_percent, status, last_studied_at")
+    .single();
+
+  if (error) throw error;
+  return mapTopic(data);
+}
+
 export async function updateTopicProgress(
   topicId: string,
   completionPercent: number,

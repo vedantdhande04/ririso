@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { shiftLabels } from "@/lib/copy";
 import {
+  beginSessionNavigation,
   formatDuration,
   liveElapsedMs,
   pauseSession,
@@ -62,7 +63,9 @@ export function SessionBlocks({
   const router = useRouter();
 
   function openSession(id: string) {
-    router.push(`/session?id=${id}`);
+    const nav = beginSessionNavigation(id);
+    onChanged?.();
+    router.push(nav.href);
   }
 
   function pause(id: string) {
