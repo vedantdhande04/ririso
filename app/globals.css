@@ -147,31 +147,32 @@ body {
   min-width: var(--touch-min);
 }
 
-/* Soft scrollbar — matches journal UI (modals, topic lists) */
+/* Soft scrollbar — warm white shade, clipped inside rounded panels */
 .soft-scroll {
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: var(--pastel-pink-deep) transparent;
+  scrollbar-color: #e5dfd4 transparent;
 }
 
 .soft-scroll::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 .soft-scroll::-webkit-scrollbar-track {
   background: transparent;
-  margin: 8px 0;
+  margin-block: 12px;
 }
 
 .soft-scroll::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--pastel-pink-deep) 55%, transparent);
+  background: #e8e2d8;
   border-radius: 999px;
-  border: 2px solid transparent;
+  border: 1px solid transparent;
   background-clip: padding-box;
 }
 
 .soft-scroll::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--pastel-pink-deep) 80%, transparent);
+  background: #ddd6ca;
   background-clip: padding-box;
 }
 
@@ -179,6 +180,10 @@ body {
   display: none;
   width: 0;
   height: 0;
+}
+
+.soft-scroll::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* Motion */

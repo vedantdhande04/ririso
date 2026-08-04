@@ -132,6 +132,19 @@ export async function renameTopic(
   return mapTopic(data);
 }
 
+export async function fetchTopic(
+  topicId: string,
+): Promise<CatalogTopic | null> {
+  const supabase = createBrowserClient();
+  const { data, error } = await supabase
+    .from("topics")
+    .select("id, name, completion_percent, status, last_studied_at")
+    .eq("id", topicId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return mapTopic(data);
+}
+
 export async function updateTopicProgress(
   topicId: string,
   completionPercent: number,

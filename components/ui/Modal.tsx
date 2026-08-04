@@ -30,18 +30,21 @@ export function Modal({
           if (!locked) onClose?.();
         }}
       />
+      {/* Outer clips to radius so the scrollbar never spills past rounded corners */}
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="soft-scroll animate-popup-in relative z-10 max-h-[92vh] w-full overflow-y-auto rounded-t-[var(--radius-popup)] border border-border-soft bg-paper p-6 shadow-soft md:max-h-[85vh] md:w-full md:max-w-xl md:rounded-[var(--radius-popup)] md:p-8"
+        className="animate-popup-in relative z-10 flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-[var(--radius-popup)] border border-border-soft bg-paper shadow-soft md:max-h-[85vh] md:w-full md:max-w-xl md:rounded-[var(--radius-popup)]"
       >
-        {title ? (
-          <h2 className="font-display text-xl font-semibold text-charcoal">
-            {title}
-          </h2>
-        ) : null}
-        <div className={title ? "mt-4" : undefined}>{children}</div>
+        <div className="soft-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 py-6 md:px-8 md:py-8">
+          {title ? (
+            <h2 className="font-display text-xl font-semibold text-charcoal">
+              {title}
+            </h2>
+          ) : null}
+          <div className={title ? "mt-4" : undefined}>{children}</div>
+        </div>
       </div>
     </div>
   );

@@ -461,6 +461,7 @@ function SessionTimerInner() {
       />
       <FinishSessionModal
         open={showFinish}
+        topicId={session.topicId}
         onCancel={() => setShowFinish(false)}
         onSave={(payload) => void onFinish(payload)}
       />
