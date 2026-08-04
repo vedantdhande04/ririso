@@ -14,6 +14,7 @@ import {
   saveTodayPlan,
   type DailyPlanLocal,
 } from "@/lib/planning-storage";
+import { resetQueueFromPlan } from "@/lib/session-storage";
 
 export default function CommitPage() {
   const router = useRouter();
@@ -39,6 +40,7 @@ export default function CommitPage() {
       pledgedAt: new Date().toISOString(),
     };
     saveTodayPlan(next);
+    resetQueueFromPlan();
     router.push("/session");
   }
 

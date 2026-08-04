@@ -87,7 +87,7 @@ export function loadDaySessions(): DaySessionsState {
   try {
     const parsed = JSON.parse(raw) as DaySessionsState;
     if (parsed.planDate !== getStudyDayKey()) return initFromPlan();
-    return parsed;
+    return reconcileWithPlan(parsed);
   } catch {
     return initFromPlan();
   }
@@ -96,6 +96,47 @@ export function loadDaySessions(): DaySessionsState {
 export function saveDaySessions(state: DaySessionsState) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(KEY, JSON.stringify(state));
+}
+
+function queueKey(
+  queue: DaySessionsState["queue"],
+): string {
+  return queue.map((i) => `${i.shift}:${i.topicId}`).join("|");
+}
+
+/** Rebuild queue from today's plan when it was saved empty/stale before planning finished. */
+function reconcileWithPlan(state: DaySessionsState): DaySessionsState {
+  const plan = loadTodayPlan();
+  const desired = activeShiftsFromPlan(plan);
+  if (desired.length === 0) return state;
+
+  const hasResolved = state.sessions.some(
+    (s) => s.status === "completed" || s.status === "skipped",
+  );
+
+  if (state.queue.length === 0) {
+    const next: DaySessionsState = {
+      ...state,
+      queue: desired,
+      currentIndex: Math.min(state.currentIndex, desired.length),
+    };
+    saveDaySessions(next);
+    return next;
+  }
+
+  // No progress yet and plan topics changed — rebuild from plan
+  if (!hasResolved && state.currentIndex === 0 && queueKey(state.queue) !== queueKey(desired)) {
+    const next: DaySessionsState = {
+      planDate: getStudyDayKey(),
+      queue: desired,
+      currentIndex: 0,
+      sessions: [],
+    };
+    saveDaySessions(next);
+    return next;
+  }
+
+  return state;
 }
 
 export function initFromPlan(): DaySessionsState {
@@ -108,6 +149,11 @@ export function initFromPlan(): DaySessionsState {
   };
   saveDaySessions(state);
   return state;
+}
+
+/** Call after pledging so the session queue matches the final plan. */
+export function resetQueueFromPlan(): DaySessionsState {
+  return initFromPlan();
 }
 
 export function getOrStartCurrentSession(

@@ -88,7 +88,11 @@ export function HomeDashboard() {
     const sameDay = getSameDayRevision();
 
     if (!pledgedToday) {
-      setCta({ href: "/", label: "Plan your day first" });
+      if (countActiveShifts(plan) > 0) {
+        setCta({ href: "/commit", label: "Pledge and begin" });
+      } else {
+        setCta({ href: "/", label: "Plan your day first" });
+      }
     } else if (plan.status === "rest") {
       setCta({ href: "/calendar", label: "Browse your planner" });
     } else if (current) {
@@ -100,6 +104,8 @@ export function HomeDashboard() {
         href: "/revision?type=next_day",
         label: "Start Yesterday's Revision",
       });
+    } else if (sessions.queue.length === 0 && countActiveShifts(plan) > 0) {
+      setCta({ href: "/session", label: "Start / continue session" });
     } else {
       setCta({ href: "/session", label: "Start / continue session" });
     }

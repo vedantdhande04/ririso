@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { FinishSessionModal } from "@/components/session/FinishSessionModal";
@@ -22,17 +23,30 @@ import {
   liveElapsedMs,
   loadDaySessions,
   pauseSession,
+  resetQueueFromPlan,
   resumeSession,
   skipSession,
   type DaySessionsState,
   type StudySessionLocal,
 } from "@/lib/session-storage";
-import { hasPledgedToday, loadTodayPlan } from "@/lib/planning-storage";
+import {
+  countActiveShifts,
+  hasPledgedToday,
+  loadTodayPlan,
+} from "@/lib/planning-storage";
+
+type GateMessage = {
+  title: string;
+  body: string;
+  href: string;
+  cta: string;
+};
 
 export function SessionTimer() {
   const router = useRouter();
   const [state, setState] = useState<DaySessionsState | null>(null);
   const [session, setSession] = useState<StudySessionLocal | null>(null);
+  const [gate, setGate] = useState<GateMessage | null>(null);
   const [now, setNow] = useState(Date.now());
   const [showPauseReasons, setShowPauseReasons] = useState(false);
   const [showFinish, setShowFinish] = useState(false);
@@ -43,28 +57,70 @@ export function SessionTimer() {
   );
 
   useEffect(() => {
+    const plan = loadTodayPlan();
+    const active = countActiveShifts(plan);
+
     if (!hasPledgedToday()) {
-      router.replace("/");
+      if (active > 0) {
+        setGate({
+          title: "A quiet promise first",
+          body: "Your plan is ready — pledge to begin Session 1.",
+          href: "/commit",
+          cta: "Go to pledge",
+        });
+      } else {
+        setGate({
+          title: "Plan your day first",
+          body: "Choose today's subjects and topics, then come back to study.",
+          href: "/",
+          cta: "Back home",
+        });
+      }
       return;
     }
-    const plan = loadTodayPlan();
+
     if (plan.status === "rest") {
-      router.replace("/");
+      setGate({
+        title: "Rest day",
+        body: "No study sessions planned today — enjoy the quiet page.",
+        href: "/calendar",
+        cta: "Open planner",
+      });
       return;
     }
 
     let day = loadDaySessions();
-    if (allQueueResolved(day)) {
+    if (day.queue.length === 0 && active > 0) {
+      day = resetQueueFromPlan();
+    }
+
+    if (allQueueResolved(day) && day.queue.length > 0) {
       router.replace("/revision?type=same_day");
       return;
     }
+
+    if (day.queue.length === 0) {
+      setGate({
+        title: "No sessions in the queue",
+        body: "Your plan doesn't have topics yet. Add subjects and topics, then pledge again.",
+        href: "/",
+        cta: "Back home",
+      });
+      return;
+    }
+
     const started = getOrStartCurrentSession(day);
-    day = started.state;
-    setState(day);
+    setState(started.state);
     setSession(started.session);
+    setGate(null);
 
     if (!started.session) {
-      router.replace("/");
+      setGate({
+        title: "Couldn't start the timer",
+        body: "Try opening the session again from home.",
+        href: "/",
+        cta: "Back home",
+      });
     }
   }, [router]);
 
@@ -73,6 +129,23 @@ export function SessionTimer() {
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
   }, [session]);
+
+  if (gate) {
+    return (
+      <PageShell>
+        <Card className="max-w-lg">
+          <h1 className="text-greeting">{gate.title}</h1>
+          <p className="text-quote mt-3">{gate.body}</p>
+          <Link
+            href={gate.href}
+            className="touch-target mt-6 inline-flex items-center justify-center rounded-[var(--radius-button)] bg-pastel-pink px-5 py-3 text-sm font-semibold text-charcoal"
+          >
+            {gate.cta}
+          </Link>
+        </Card>
+      </PageShell>
+    );
+  }
 
   if (!state || !session) {
     return (
