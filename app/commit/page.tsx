@@ -45,7 +45,7 @@ export default function CommitPage() {
     };
     saveTodayPlan(next);
     resetQueueFromPlan();
-    void ensureSameDayRevision();
+    await ensureSameDayRevision();
     await syncAfterCommit();
     router.push("/");
   }

@@ -15,7 +15,12 @@ import { updateTopicProgress } from "@/lib/catalog";
 import { celebrateDayComplete } from "@/lib/confetti";
 import { shiftLabels, timerNudge } from "@/lib/copy";
 import { saveSessionNotes, type SessionNotes } from "@/lib/notes-storage";
-import { schedulePostStudyRevisions } from "@/lib/revision-storage";
+import {
+  ensureSameDayRevision,
+  getSameDayRevision,
+  schedulePostStudyRevisions,
+  type LocalRevision,
+} from "@/lib/revision-storage";
 import {
   allStudyBlocksResolved,
   beginSessionNavigation,
@@ -60,6 +65,7 @@ function SessionTimerInner() {
 
   const [state, setState] = useState<DaySessionsState | null>(null);
   const [session, setSession] = useState<StudySessionLocal | null>(null);
+  const [revision, setRevision] = useState<LocalRevision | null>(null);
   const [gate, setGate] = useState<GateMessage | null>(null);
   const [now, setNow] = useState(Date.now());
   const [showPauseReasons, setShowPauseReasons] = useState(false);
@@ -86,6 +92,7 @@ function SessionTimerInner() {
       });
       setSession(null);
       setState(null);
+      setRevision(null);
       return;
     }
 
@@ -98,10 +105,12 @@ function SessionTimerInner() {
       });
       setSession(null);
       setState(null);
+      setRevision(null);
       return;
     }
 
     const day = loadDaySessions();
+    setRevision(getSameDayRevision());
     const open = getOpenSession(day);
 
     // Prefer active in the URL; otherwise first paused — never auto-resume.
@@ -166,6 +175,7 @@ function SessionTimerInner() {
       setNow(Date.now());
       const day = loadDaySessions();
       setState(day);
+      setRevision(getSameDayRevision());
       if (sessionId) {
         const latest = getSessionById(sessionId, day);
         if (latest) {
@@ -289,6 +299,13 @@ function SessionTimerInner() {
     const stillOpen = getOpenSession(next);
     if (stillOpen) {
       router.replace(sessionHref(stillOpen.id));
+      return;
+    }
+    const sameDay =
+      getSameDayRevision() ?? (await ensureSameDayRevision());
+    setRevision(sameDay);
+    if (sameDay && !sameDay.completedAt) {
+      router.push("/revision?type=same_day");
       return;
     }
     router.push("/");
@@ -523,6 +540,51 @@ function SessionTimerInner() {
           ) : null}
         </div>
       )}
+
+      {/* Daily revision — start from Session tab too, not only Home */}
+      {!gate && state ? (
+        <div
+          className={`mt-4 rounded-[20px] border border-border-soft p-4 ${
+            revision?.completedAt
+              ? "bg-pastel-green/30"
+              : "bg-pastel-yellow/35"
+          }`}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="text-caption">Revision</p>
+              <p className="font-display text-base font-semibold text-charcoal">
+                Daily revision
+              </p>
+              <p className="text-caption">
+                {revision?.completedAt
+                  ? "Completed"
+                  : "Start anytime — works like a session block"}
+              </p>
+            </div>
+            <span
+              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                revision?.completedAt
+                  ? "bg-pastel-green/50 text-pastel-green-deep"
+                  : "bg-warm-white text-muted border border-border-soft"
+              }`}
+            >
+              {revision?.completedAt ? "Completed" : "Ready"}
+            </span>
+          </div>
+          {!revision?.completedAt ? (
+            <Link
+              href="/revision?type=same_day"
+              className="touch-target mt-3 inline-flex items-center justify-center rounded-[var(--radius-button)] bg-pastel-pink px-4 py-2 text-sm font-semibold text-charcoal"
+              onClick={() => {
+                void ensureSameDayRevision();
+              }}
+            >
+              {revision ? "Start / resume revision" : "Start daily revision"}
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
 
       {session && (isActive || isPaused) ? (
         <>

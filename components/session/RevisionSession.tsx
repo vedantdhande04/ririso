@@ -55,13 +55,13 @@ export function RevisionSession() {
     let cancelled = false;
     async function load() {
       let found = getRevisionForTodayByType(type);
-      if (!found && type === "same_day") {
-        found = await ensureSameDayRevision();
+      if (type === "same_day") {
+        found = (await ensureSameDayRevision()) ?? found;
       }
       if (cancelled) return;
       setRevision(found);
       setStatus("active");
-      setAccumulatedMs(0);
+      setAccumulatedMs(found?.studyMs ?? 0);
       setSegmentStart(Date.now());
       setReflection(found?.reflection ?? "");
     }

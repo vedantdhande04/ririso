@@ -294,9 +294,47 @@ function mergeSessionsJson(
   return JSON.stringify(merged);
 }
 
-/** Newer blob wins for most keys; sessions always merge by progress. */
+/** Prefer non-empty JSON; never let a missing key wipe the other device. */
+function preferPresentJson(
+  newer: string | null | undefined,
+  older: string | null | undefined,
+): string | null {
+  const n = newer && newer !== "null" && newer !== "[]" && newer !== "{}" ? newer : null;
+  const o = older && older !== "null" && older !== "[]" && older !== "{}" ? older : null;
+  if (n && o) {
+    // Prefer the longer / richer blob when both exist (revision lists grow)
+    try {
+      const nArr = JSON.parse(n) as unknown;
+      const oArr = JSON.parse(o) as unknown;
+      if (Array.isArray(nArr) && Array.isArray(oArr)) {
+        return nArr.length >= oArr.length ? n : o;
+      }
+    } catch {
+      /* fall through */
+    }
+    return n.length >= o.length ? n : o;
+  }
+  return n ?? o;
+}
+
+/** Newer blob wins for scalar keys; sessions merge; never null-wipe lists. */
 function mergeSyncPayloads(newer: SyncPayload, older: SyncPayload): SyncPayload {
-  const out: SyncPayload = { ...older, ...newer };
+  const out: SyncPayload = { ...older };
+  for (const key of SYNC_STORAGE_KEYS) {
+    if (key === "ririso:sessions") continue;
+    if (
+      key === "ririso:revisions" ||
+      key === "ririso:notes" ||
+      key === "ririso:calendar-events" ||
+      key === "ririso:session-history"
+    ) {
+      out[key] = preferPresentJson(newer[key], older[key]);
+      continue;
+    }
+    const n = newer[key];
+    if (n != null && n !== "") out[key] = n;
+    else if (out[key] == null) out[key] = n ?? null;
+  }
   out["ririso:sessions"] = mergeSessionsJson(
     newer["ririso:sessions"],
     older["ririso:sessions"],
