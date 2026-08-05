@@ -369,24 +369,22 @@ export function startSession(
   if (target.status === "completed" || target.status === "skipped") {
     return { state, session: target };
   }
-  if (target.status === "active") return { state, session: target };
-  if (target.status === "paused") {
-    const next = resumeSession(state, sessionId);
-    return {
-      state: next,
-      session: next.sessions.find((s) => s.id === sessionId) ?? null,
-    };
+  // Never auto-resume a paused block — only resumeSession() does that.
+  if (target.status === "active" || target.status === "paused") {
+    return { state, session: target };
   }
 
-  const otherActive = state.sessions.find(
+  // Pending → auto-pause any other active session, then start this one.
+  let working = state;
+  const otherActive = working.sessions.find(
     (s) => s.id !== sessionId && s.status === "active",
   );
   if (otherActive) {
-    return { state, session: null, blockedById: otherActive.id };
+    working = pauseSession(working, otherActive.id, "Switched session");
   }
 
   const now = new Date().toISOString();
-  const sessions = state.sessions.map((s) =>
+  const sessions = working.sessions.map((s) =>
     s.id === sessionId
       ? {
           ...s,
@@ -396,12 +394,21 @@ export function startSession(
         }
       : s,
   );
-  const next = { ...state, sessions };
+  const next = { ...working, sessions };
   saveDaySessions(next);
   return { state: next, session: sessions.find((s) => s.id === sessionId) ?? null };
 }
 
-/** Start/resume a specific session. Without id, opens active/paused only (no auto-start). */
+/** Open a session without changing its status (paused stays paused). */
+export function loadSessionForView(
+  state: DaySessionsState,
+  sessionId: string,
+): { state: DaySessionsState; session: StudySessionLocal | null } {
+  const session = state.sessions.find((s) => s.id === sessionId) ?? null;
+  return { state, session };
+}
+
+/** Start/open a specific session. Without id, returns active or first paused (no auto-start). */
 export function getOrStartCurrentSession(
   state: DaySessionsState,
   sessionId?: string | null,
@@ -413,20 +420,49 @@ export function getOrStartCurrentSession(
   return { state, session: open };
 }
 
-/** Persist-start a session then return the href to open it. */
-export function beginSessionNavigation(sessionId: string): {
+export type BeginSessionMode = "start" | "open" | "resume";
+
+/**
+ * Persist navigation intent then return href.
+ * - start: activate a pending block (auto-pauses any other active)
+ * - open: navigate only — paused stays paused
+ * - resume: explicitly resume a paused block
+ */
+export function beginSessionNavigation(
+  sessionId: string,
+  mode: BeginSessionMode = "start",
+): {
   href: string;
   blockedById?: string;
   session: StudySessionLocal | null;
 } {
-  const result = startSession(loadDaySessions(), sessionId);
-  if (result.blockedById) {
+  const day = loadDaySessions();
+  if (mode === "open") {
     return {
-      href: sessionHref(result.blockedById),
-      blockedById: result.blockedById,
-      session: result.session,
+      href: sessionHref(sessionId),
+      session: getSessionById(sessionId, day),
     };
   }
+  if (mode === "resume") {
+    const target = getSessionById(sessionId, day);
+    if (target?.status === "paused") {
+      const next = resumeSession(day, sessionId);
+      return {
+        href: sessionHref(sessionId),
+        session: getSessionById(sessionId, next),
+      };
+    }
+    if (target?.status === "pending") {
+      const started = startSession(day, sessionId);
+      return {
+        href: sessionHref(sessionId),
+        session: started.session,
+      };
+    }
+    return { href: sessionHref(sessionId), session: target };
+  }
+
+  const result = startSession(day, sessionId);
   return {
     href: sessionHref(sessionId),
     session: result.session,

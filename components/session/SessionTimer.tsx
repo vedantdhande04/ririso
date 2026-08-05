@@ -22,15 +22,16 @@ import {
   finishSession,
   formatDuration,
   getOpenSession,
-  getOrStartCurrentSession,
   getSessionById,
   listSessionBlocks,
   liveElapsedMs,
   loadDaySessions,
+  loadSessionForView,
   pauseSession,
   resumeSession,
   sessionHref,
   skipSession,
+  startSession,
   type DaySessionsState,
   type StudySessionLocal,
 } from "@/lib/session-storage";
@@ -55,8 +56,6 @@ function SessionTimerInner() {
   const [state, setState] = useState<DaySessionsState | null>(null);
   const [session, setSession] = useState<StudySessionLocal | null>(null);
   const [gate, setGate] = useState<GateMessage | null>(null);
-  const [picker, setPicker] = useState<StudySessionLocal[] | null>(null);
-  const [blockPrompt, setBlockPrompt] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [showPauseReasons, setShowPauseReasons] = useState(false);
   const [showFinish, setShowFinish] = useState(false);
@@ -68,19 +67,18 @@ function SessionTimerInner() {
 
   const boot = useCallback(() => {
     const plan = loadTodayPlan();
-    const active = countActiveShifts(plan);
+    const activeCount = countActiveShifts(plan);
 
     if (!hasPledgedToday()) {
       setGate({
-        title: active > 0 ? "A quiet promise first" : "Plan your day first",
+        title: activeCount > 0 ? "A quiet promise first" : "Plan your day first",
         body:
-          active > 0
+          activeCount > 0
             ? "Your plan is ready — pledge to begin any session."
             : "Choose today's subjects and topics, then come back.",
-        href: active > 0 ? "/commit" : "/",
-        cta: active > 0 ? "Go to pledge" : "Back home",
+        href: activeCount > 0 ? "/commit" : "/",
+        cta: activeCount > 0 ? "Go to pledge" : "Back home",
       });
-      setPicker(null);
       setSession(null);
       setState(null);
       return;
@@ -93,7 +91,6 @@ function SessionTimerInner() {
         href: "/calendar",
         cta: "Open planner",
       });
-      setPicker(null);
       setSession(null);
       setState(null);
       return;
@@ -102,7 +99,7 @@ function SessionTimerInner() {
     const day = loadDaySessions();
     const open = getOpenSession(day);
 
-    // Navbar / bare /session → resume the live block with a stable URL
+    // Prefer active in the URL; otherwise first paused — never auto-resume.
     if (!sessionId && open) {
       router.replace(sessionHref(open.id));
       return;
@@ -121,70 +118,65 @@ function SessionTimerInner() {
           href: "/",
           cta: "Back home",
         });
-        setPicker(null);
         return;
       }
+
       if (existing.status === "completed" || existing.status === "skipped") {
         setState(day);
         setSession(existing);
         setGate(null);
-        setPicker(null);
-        setBlockPrompt(null);
         return;
       }
-      const started = getOrStartCurrentSession(day, sessionId);
-      if (started.blockedById) {
+
+      if (existing.status === "pending") {
+        // Explicit navigation to a pending block starts it (auto-pauses any active).
+        const started = startSession(day, sessionId);
         setState(started.state);
-        setSession(getSessionById(sessionId, started.state));
-        setBlockPrompt(started.blockedById);
+        setSession(started.session);
         setGate(null);
-        setPicker(null);
         return;
       }
-      setState(started.state);
-      setSession(started.session);
+
+      // active or paused — load only, never auto-resume
+      const viewed = loadSessionForView(day, sessionId);
+      setState(viewed.state);
+      setSession(viewed.session);
       setGate(null);
-      setPicker(null);
-      setBlockPrompt(null);
       return;
     }
 
-    // No open session — show picker of today's blocks
-    const blocks = listSessionBlocks(day).filter(
-      (s) => s.status !== "completed" && s.status !== "skipped",
-    );
+    // No open session — empty board still shows pending blocks via shell below
     setState(day);
     setSession(null);
     setGate(null);
-    setBlockPrompt(null);
-    setPicker(blocks.length > 0 ? blocks : []);
   }, [sessionId, router]);
 
   useEffect(() => {
     boot();
   }, [boot]);
 
-  // Keep wall-clock timer accurate after tab switch / browser reopen
+  // Re-read storage after tab switch — never change paused → active here
   useEffect(() => {
     function syncFromStorage() {
       setNow(Date.now());
-      if (!sessionId) {
-        boot();
-        return;
-      }
       const day = loadDaySessions();
-      const latest = getSessionById(sessionId, day);
-      if (latest) {
-        setState(day);
-        setSession(latest);
+      setState(day);
+      if (sessionId) {
+        const latest = getSessionById(sessionId, day);
+        if (latest) setSession(latest);
+      } else {
+        boot();
       }
     }
+    function onVisibility() {
+      if (document.visibilityState === "visible") syncFromStorage();
+    }
     window.addEventListener("focus", syncFromStorage);
-    document.addEventListener("visibilitychange", syncFromStorage);
+    document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("ririso:sessions-changed", syncFromStorage);
     return () => {
       window.removeEventListener("focus", syncFromStorage);
-      document.removeEventListener("visibilitychange", syncFromStorage);
+      document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("ririso:sessions-changed", syncFromStorage);
     };
   }, [boot, sessionId]);
@@ -194,6 +186,22 @@ function SessionTimerInner() {
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
   }, [session]);
+
+  const pausedOthers = useMemo(() => {
+    if (!state) return [];
+    return listSessionBlocks(state).filter(
+      (s) =>
+        s.status === "paused" && (!session || s.id !== session.id),
+    );
+  }, [state, session]);
+
+  const pendingOthers = useMemo(() => {
+    if (!state) return [];
+    return listSessionBlocks(state).filter(
+      (s) =>
+        s.status === "pending" && (!session || s.id !== session.id),
+    );
+  }, [state, session]);
 
   if (gate) {
     return (
@@ -212,57 +220,7 @@ function SessionTimerInner() {
     );
   }
 
-  if (picker) {
-    return (
-      <PageShell>
-        <Card className="max-w-lg">
-          <h1 className="text-greeting">Choose a session</h1>
-          <p className="text-quote mt-3">
-            Start any block — your timer keeps running if you leave and come
-            back.
-          </p>
-          {picker.length === 0 ? (
-            <p className="text-caption mt-4">
-              No open study blocks. Add one from home, or enjoy a quiet pause.
-            </p>
-          ) : (
-            <ul className="mt-5 space-y-2">
-              {picker.map((block) => (
-                <li key={block.id}>
-                  <button
-                    type="button"
-                    className="touch-target flex w-full flex-col rounded-[18px] border border-border-soft bg-ivory/70 px-4 py-3 text-left transition hover:bg-pastel-pink/30"
-                    onClick={() => {
-                      const nav = beginSessionNavigation(block.id);
-                      router.push(nav.href);
-                    }}
-                  >
-                    <span className="text-caption">
-                      {shiftLabels[block.shift] ?? block.shift}
-                      {block.status === "paused" ? " · Paused" : ""}
-                    </span>
-                    <span className="font-display font-semibold text-charcoal">
-                      {block.subjectName}
-                    </span>
-                    <span className="text-caption truncate">{block.topicName}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <Button
-            variant="ghost"
-            className="mt-4 w-full"
-            onClick={() => router.push("/")}
-          >
-            Back home
-          </Button>
-        </Card>
-      </PageShell>
-    );
-  }
-
-  if (!state || !session) {
+  if (!state) {
     return (
       <PageShell>
         <p className="text-caption">Preparing your session…</p>
@@ -270,34 +228,16 @@ function SessionTimerInner() {
     );
   }
 
-  if (session.status === "pending" && blockPrompt) {
-    return (
-      <PageShell>
-        <Card className="max-w-lg">
-          <h1 className="text-greeting">Another session is running</h1>
-          <p className="text-quote mt-3">
-            Pause the active timer first, then start this block — or open the
-            active one.
-          </p>
-          <div className="mt-6 flex flex-col gap-2 sm:flex-row">
-            <Button onClick={() => router.push(sessionHref(blockPrompt))}>
-              Open active session
-            </Button>
-            <Button variant="secondary" onClick={() => router.push("/")}>
-              Back home
-            </Button>
-          </div>
-        </Card>
-      </PageShell>
-    );
-  }
-
-  const elapsed = liveElapsedMs(session, now);
   const total = state.sessions.length;
   const doneCount = state.sessions.filter(
     (s) => s.status === "completed" || s.status === "skipped",
   ).length;
   const progress = total === 0 ? 0 : (doneCount / total) * 100;
+
+  function selectOther(id: string, mode: "start" | "open") {
+    const nav = beginSessionNavigation(id, mode);
+    router.push(nav.href);
+  }
 
   function onPause(reason: string | null) {
     if (!session || !state) return;
@@ -318,6 +258,11 @@ function SessionTimerInner() {
     if (allStudyBlocksResolved(next)) {
       celebrateDayComplete();
       await schedulePostStudyRevisions();
+    }
+    const stillOpen = getOpenSession(next);
+    if (stillOpen) {
+      router.replace(sessionHref(stillOpen.id));
+      return;
     }
     router.push("/");
   }
@@ -376,7 +321,7 @@ function SessionTimerInner() {
     }
   }
 
-  if (session.status === "completed" || session.status === "skipped") {
+  if (session && (session.status === "completed" || session.status === "skipped")) {
     return (
       <PageShell>
         <Card className="max-w-lg text-center">
@@ -397,78 +342,176 @@ function SessionTimerInner() {
     );
   }
 
+  const elapsed = session ? liveElapsedMs(session, now) : 0;
+  const isPaused = session?.status === "paused";
+  const isActive = session?.status === "active";
+
   return (
     <PageShell className="flex flex-1 flex-col">
-      <Card
-        className="flex flex-1 flex-col items-center text-center md:min-h-[70vh]"
-        doodle={<Doodle name="mug" size={32} />}
-      >
-        <p className="text-caption">
-          {doneCount} of {total} blocks done · timer keeps running if you leave
-        </p>
-        <h1 className="font-display mt-3 text-2xl font-semibold text-charcoal md:text-3xl">
-          {session.subjectName}
-        </h1>
-        <p className="text-quote mt-1">{session.topicName}</p>
-
-        <p
-          className="mt-10 font-display text-6xl font-semibold tracking-tight text-pastel-green-deep md:text-7xl"
-          aria-live="polite"
+      {session && (isActive || isPaused) ? (
+        <Card
+          className="flex flex-col items-center text-center md:min-h-[58vh]"
+          doodle={<Doodle name="mug" size={32} />}
         >
-          {formatDuration(elapsed)}
-        </p>
+          <p className="text-caption">
+            {doneCount} of {total} blocks done
+            {isPaused ? " · paused — press Resume when ready" : " · running"}
+          </p>
+          <h1 className="font-display mt-3 text-2xl font-semibold text-charcoal md:text-3xl">
+            {session.subjectName}
+          </h1>
+          <p className="text-quote mt-1">{session.topicName}</p>
+          {isPaused ? (
+            <span className="mt-3 rounded-full bg-pastel-yellow/70 px-3 py-1 text-xs font-semibold text-charcoal">
+              Paused
+            </span>
+          ) : null}
 
-        <div className="mt-6">
-          <CapsuleProgress value={progress} />
-        </div>
+          <p
+            className={`mt-8 font-display text-6xl font-semibold tracking-tight md:text-7xl ${
+              isPaused ? "text-muted" : "text-pastel-green-deep"
+            }`}
+            aria-live="polite"
+          >
+            {formatDuration(elapsed)}
+          </p>
 
-        <p className="text-quote mt-8 max-w-sm">{nudge}</p>
+          <div className="mt-6">
+            <CapsuleProgress value={progress} />
+          </div>
 
-        <div className="mt-auto flex w-full flex-col gap-3 pt-10 sm:flex-row sm:justify-center">
-          {session.status === "active" ? (
+          <p className="text-quote mt-8 max-w-sm">{nudge}</p>
+
+          <div className="mt-auto flex w-full flex-col gap-3 pt-10 sm:flex-row sm:justify-center">
+            {isActive ? (
+              <Button
+                variant="secondary"
+                className="w-full sm:w-40"
+                disabled={saving}
+                onClick={() => setShowPauseReasons(true)}
+              >
+                Pause
+              </Button>
+            ) : (
+              <Button
+                className="w-full sm:w-40"
+                disabled={saving}
+                onClick={onResume}
+              >
+                Resume
+              </Button>
+            )}
             <Button
-              variant="secondary"
+              variant="selected"
               className="w-full sm:w-40"
               disabled={saving}
-              onClick={() => setShowPauseReasons(true)}
+              onClick={() => setShowFinish(true)}
             >
-              Pause
+              Finish Session
             </Button>
-          ) : (
-            <Button className="w-full sm:w-40" disabled={saving} onClick={onResume}>
-              Resume
+            <Button
+              variant="ghost"
+              className="w-full sm:w-40"
+              disabled={saving}
+              onClick={() => void onSkip()}
+            >
+              Skip for now
             </Button>
-          )}
-          <Button
-            variant="selected"
-            className="w-full sm:w-40"
-            disabled={saving}
-            onClick={() => setShowFinish(true)}
-          >
-            Finish Session
-          </Button>
-          <Button
-            variant="ghost"
-            className="w-full sm:w-40"
-            disabled={saving}
-            onClick={() => void onSkip()}
-          >
-            Skip for now
-          </Button>
-        </div>
-      </Card>
+          </div>
+        </Card>
+      ) : (
+        <Card className="max-w-lg">
+          <h1 className="text-greeting">Sessions today</h1>
+          <p className="text-quote mt-3">
+            Start any block. Pause one, start another — timers stay put until
+            you resume.
+          </p>
+        </Card>
+      )}
 
-      <PauseReasonPicker
-        open={showPauseReasons}
-        onCancel={() => setShowPauseReasons(false)}
-        onSelect={onPause}
-      />
-      <FinishSessionModal
-        open={showFinish}
-        topicId={session.topicId}
-        onCancel={() => setShowFinish(false)}
-        onSave={(payload) => void onFinish(payload)}
-      />
+      {(pausedOthers.length > 0 || pendingOthers.length > 0) && (
+        <div className="mt-4 space-y-3">
+          {pausedOthers.length > 0 ? (
+            <div>
+              <p className="text-caption mb-2 font-semibold">Paused sessions</p>
+              <ul className="space-y-2">
+                {pausedOthers.map((block) => (
+                  <li key={block.id}>
+                    <button
+                      type="button"
+                      className="touch-target flex w-full items-center justify-between gap-3 rounded-[18px] border border-pastel-yellow/80 bg-pastel-yellow/35 px-4 py-3 text-left transition hover:scale-[1.01]"
+                      onClick={() => selectOther(block.id, "open")}
+                    >
+                      <span className="min-w-0">
+                        <span className="text-caption">
+                          {shiftLabels[block.shift] ?? block.shift} · Paused
+                        </span>
+                        <span className="block truncate font-display font-semibold text-charcoal">
+                          {block.subjectName}
+                        </span>
+                        <span className="text-caption truncate">
+                          {block.topicName}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-sm font-semibold text-muted">
+                        {formatDuration(liveElapsedMs(block))}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {pendingOthers.length > 0 ? (
+            <div>
+              <p className="text-caption mb-2 font-semibold">Ready to start</p>
+              <ul className="space-y-2">
+                {pendingOthers.map((block) => (
+                  <li key={block.id}>
+                    <button
+                      type="button"
+                      className="touch-target flex w-full items-center justify-between gap-3 rounded-[18px] border border-border-soft bg-ivory/70 px-4 py-3 text-left transition hover:bg-pastel-pink/30"
+                      onClick={() => selectOther(block.id, "start")}
+                    >
+                      <span className="min-w-0">
+                        <span className="text-caption">
+                          {shiftLabels[block.shift] ?? block.shift}
+                        </span>
+                        <span className="block truncate font-display font-semibold text-charcoal">
+                          {block.subjectName}
+                        </span>
+                        <span className="text-caption truncate">
+                          {block.topicName}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-sm font-semibold text-pastel-green-deep">
+                        Start
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {session && (isActive || isPaused) ? (
+        <>
+          <PauseReasonPicker
+            open={showPauseReasons}
+            onCancel={() => setShowPauseReasons(false)}
+            onSelect={onPause}
+          />
+          <FinishSessionModal
+            open={showFinish}
+            topicId={session.topicId}
+            onCancel={() => setShowFinish(false)}
+            onSave={(payload) => void onFinish(payload)}
+          />
+        </>
+      ) : null}
     </PageShell>
   );
 }

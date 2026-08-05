@@ -62,8 +62,8 @@ export function SessionBlocks({
 }: SessionBlocksProps) {
   const router = useRouter();
 
-  function openSession(id: string) {
-    const nav = beginSessionNavigation(id);
+  function openSession(id: string, mode: "start" | "open" | "resume" = "start") {
+    const nav = beginSessionNavigation(id, mode);
     onChanged?.();
     router.push(nav.href);
   }
@@ -117,7 +117,7 @@ export function SessionBlocks({
                 {session.status === "pending" ? (
                   <Button
                     className="!min-h-10 !px-4 !py-2 text-sm"
-                    onClick={() => openSession(session.id)}
+                    onClick={() => openSession(session.id, "start")}
                   >
                     Start
                   </Button>
@@ -126,7 +126,7 @@ export function SessionBlocks({
                   <>
                     <Button
                       className="!min-h-10 !px-4 !py-2 text-sm"
-                      onClick={() => openSession(session.id)}
+                      onClick={() => openSession(session.id, "open")}
                     >
                       Open timer
                     </Button>
@@ -142,16 +142,16 @@ export function SessionBlocks({
                 {session.status === "paused" ? (
                   <Button
                     className="!min-h-10 !px-4 !py-2 text-sm"
-                    onClick={() => openSession(session.id)}
+                    onClick={() => openSession(session.id, "open")}
                   >
-                    Resume
+                    Open paused
                   </Button>
                 ) : null}
                 {session.status === "skipped" ? (
                   <Button
                     variant="secondary"
                     className="!min-h-10 !px-4 !py-2 text-sm"
-                    onClick={() => openSession(session.id)}
+                    onClick={() => openSession(session.id, "open")}
                   >
                     Open
                   </Button>
