@@ -18,6 +18,8 @@ import { saveSessionNotes, type SessionNotes } from "@/lib/notes-storage";
 import {
   ensureSameDayRevision,
   getSameDayRevision,
+  liveRevisionMs,
+  revisionHref,
   schedulePostStudyRevisions,
   type LocalRevision,
 } from "@/lib/revision-storage";
@@ -541,13 +543,16 @@ function SessionTimerInner() {
         </div>
       )}
 
-      {/* Daily revision — start from Session tab too, not only Home */}
+      {/* Daily revision — start / resume from Session tab */}
       {!gate && state ? (
         <div
           className={`mt-4 rounded-[20px] border border-border-soft p-4 ${
             revision?.completedAt
               ? "bg-pastel-green/30"
-              : "bg-pastel-yellow/35"
+              : revision?.runStatus === "active" ||
+                  revision?.runStatus === "paused"
+                ? "bg-pastel-pink/25"
+                : "bg-pastel-yellow/35"
           }`}
         >
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -559,28 +564,42 @@ function SessionTimerInner() {
               <p className="text-caption">
                 {revision?.completedAt
                   ? "Completed"
-                  : "Start anytime — works like a session block"}
+                  : revision?.runStatus === "active"
+                    ? `Running · ${formatDuration(liveRevisionMs(revision))}`
+                    : revision?.runStatus === "paused"
+                      ? `Paused · ${formatDuration(liveRevisionMs(revision))}`
+                      : "Start anytime — part of today’s sessions"}
               </p>
             </div>
             <span
               className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                 revision?.completedAt
                   ? "bg-pastel-green/50 text-pastel-green-deep"
-                  : "bg-warm-white text-muted border border-border-soft"
+                  : revision?.runStatus === "active"
+                    ? "bg-pastel-green/50 text-pastel-green-deep"
+                    : revision?.runStatus === "paused"
+                      ? "bg-pastel-yellow/70 text-charcoal"
+                      : "bg-warm-white text-muted border border-border-soft"
               }`}
             >
-              {revision?.completedAt ? "Completed" : "Ready"}
+              {revision?.completedAt
+                ? "Completed"
+                : revision?.runStatus === "active"
+                  ? "Live"
+                  : revision?.runStatus === "paused"
+                    ? "Paused"
+                    : "Ready"}
             </span>
           </div>
           {!revision?.completedAt ? (
             <Link
-              href="/revision?type=same_day"
+              href={revisionHref("same_day")}
               className="touch-target mt-3 inline-flex items-center justify-center rounded-[var(--radius-button)] bg-pastel-pink px-4 py-2 text-sm font-semibold text-charcoal"
-              onClick={() => {
-                void ensureSameDayRevision();
-              }}
             >
-              {revision ? "Start / resume revision" : "Start daily revision"}
+              {revision?.runStatus === "active" ||
+              revision?.runStatus === "paused"
+                ? "Open running revision"
+                : "Start daily revision"}
             </Link>
           ) : null}
         </div>

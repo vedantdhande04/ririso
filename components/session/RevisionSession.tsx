@@ -13,15 +13,19 @@ import { Sparkle } from "@/components/ui/Sparkle";
 import { addDays, getStudyDayKey } from "@/lib/date";
 import { notesGroupedByTopic } from "@/lib/notes-storage";
 import {
+  beginRevisionTimer,
   completeRevision,
   ensureSameDayRevision,
   getRevisionForTodayByType,
+  heartbeatRevisionTimer,
+  liveRevisionMs,
+  pauseRevisionTimer,
+  resumeRevisionTimer,
+  saveRevisionReflection,
   type LocalRevision,
 } from "@/lib/revision-storage";
 import { formatDuration } from "@/lib/session-storage";
 import type { RevisionType } from "@/lib/supabase/types";
-
-type TimerStatus = "active" | "paused";
 
 const TITLES: Record<string, string> = {
   same_day: "Same day revision",
@@ -44,12 +48,9 @@ export function RevisionSession() {
   ) as RevisionType;
 
   const [revision, setRevision] = useState<LocalRevision | null>(null);
-  const [status, setStatus] = useState<TimerStatus>("active");
-  const [accumulatedMs, setAccumulatedMs] = useState(0);
-  const [segmentStart, setSegmentStart] = useState(Date.now());
   const [now, setNow] = useState(Date.now());
-  const [reflection, setReflection] = useState("");
   const [sparkle, setSparkle] = useState(false);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,12 +59,22 @@ export function RevisionSession() {
       if (type === "same_day") {
         found = (await ensureSameDayRevision()) ?? found;
       }
-      if (cancelled) return;
-      setRevision(found);
-      setStatus("active");
-      setAccumulatedMs(found?.studyMs ?? 0);
-      setSegmentStart(Date.now());
-      setReflection(found?.reflection ?? "");
+      if (cancelled || !found) {
+        if (!cancelled) {
+          setRevision(null);
+          setReady(true);
+        }
+        return;
+      }
+      if (found.completedAt) {
+        setRevision(found);
+        setReady(true);
+        return;
+      }
+      // Persist start so Session tab / refresh can return here
+      const running = beginRevisionTimer(found.id) ?? found;
+      setRevision(running);
+      setReady(true);
     }
     void load();
     return () => {
@@ -72,10 +83,30 @@ export function RevisionSession() {
   }, [type]);
 
   useEffect(() => {
-    if (status !== "active") return;
-    const id = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(id);
-  }, [status]);
+    if (!revision || revision.completedAt || revision.runStatus !== "active") {
+      return;
+    }
+    const revisionId = revision.id;
+    const tick = window.setInterval(() => setNow(Date.now()), 250);
+    const beat = window.setInterval(() => {
+      const next = heartbeatRevisionTimer(revisionId);
+      if (next) setRevision(next);
+    }, 5_000);
+
+    function onHide() {
+      if (document.visibilityState === "hidden") {
+        const next = heartbeatRevisionTimer(revisionId);
+        if (next) setRevision(next);
+      }
+    }
+    document.addEventListener("visibilitychange", onHide);
+
+    return () => {
+      window.clearInterval(tick);
+      window.clearInterval(beat);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, [revision?.id, revision?.runStatus, revision?.completedAt]);
 
   const noteGroups = useMemo(() => {
     if (!revision) return [];
@@ -86,10 +117,16 @@ export function RevisionSession() {
     return notesGroupedByTopic(date);
   }, [revision, type]);
 
-  const elapsed =
-    status === "active"
-      ? accumulatedMs + Math.max(0, now - segmentStart)
-      : accumulatedMs;
+  const elapsed = revision ? liveRevisionMs(revision, now) : 0;
+  const isPaused = revision?.runStatus === "paused";
+
+  if (!ready) {
+    return (
+      <PageShell>
+        <p className="text-caption">Opening revision…</p>
+      </PageShell>
+    );
+  }
 
   if (!revision) {
     return (
@@ -100,8 +137,8 @@ export function RevisionSession() {
             No revision block for this type yet. Pledge today&apos;s plan first,
             or open Daily Revision from home anytime after pledging.
           </p>
-          <Button className="mt-6" onClick={() => router.push("/")}>
-            Back home
+          <Button className="mt-6" onClick={() => router.push("/session")}>
+            Back to sessions
           </Button>
         </Card>
       </PageShell>
@@ -116,8 +153,8 @@ export function RevisionSession() {
           <p className="text-quote mt-3">
             Lovely work revisiting today&apos;s pages.
           </p>
-          <Button className="mt-6" onClick={() => router.push("/")}>
-            Back home
+          <Button className="mt-6" onClick={() => router.push("/session")}>
+            Back to sessions
           </Button>
         </Card>
       </PageShell>
@@ -125,26 +162,29 @@ export function RevisionSession() {
   }
 
   function onPause() {
-    setAccumulatedMs(elapsed);
-    setStatus("paused");
+    if (!revision) return;
+    const next = pauseRevisionTimer(revision.id);
+    if (next) setRevision(next);
   }
 
   function onResume() {
-    setSegmentStart(Date.now());
-    setStatus("active");
+    if (!revision) return;
+    const next = resumeRevisionTimer(revision.id);
+    if (next) setRevision(next);
   }
 
   function onFinish() {
     if (!revision) return;
-    const studied = elapsed;
+    const studied = liveRevisionMs(revision);
     const current = revision;
-    completeRevision(current.id, studied, reflection);
+    completeRevision(current.id, studied, current.reflection);
     setSparkle(true);
     setRevision({
       ...current,
       completedAt: new Date().toISOString(),
       studyMs: studied,
-      reflection,
+      runStatus: "pending",
+      segmentStartedAt: null,
     });
   }
 
@@ -157,19 +197,26 @@ export function RevisionSession() {
         >
           <p className="text-caption">{TITLES[type] ?? "Revision"}</p>
           <h1 className="text-greeting mt-2">Gently revisit</h1>
+          {isPaused ? (
+            <span className="mt-3 inline-block rounded-full bg-pastel-yellow/70 px-3 py-1 text-xs font-semibold text-charcoal">
+              Paused — open Session anytime to resume
+            </span>
+          ) : null}
           <p
-            className="mt-8 font-display text-5xl font-semibold text-pastel-green-deep md:text-6xl"
+            className={`mt-8 font-display text-5xl font-semibold md:text-6xl ${
+              isPaused ? "text-muted" : "text-pastel-green-deep"
+            }`}
             aria-live="polite"
           >
             {formatDuration(elapsed)}
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
-            {status === "active" ? (
+            {isPaused ? (
+              <Button onClick={onResume}>Resume</Button>
+            ) : (
               <Button variant="secondary" onClick={onPause}>
                 Pause
               </Button>
-            ) : (
-              <Button onClick={onResume}>Resume</Button>
             )}
             <Button variant="selected" onClick={onFinish}>
               Finish revision <Sparkle show={sparkle} />
@@ -179,8 +226,14 @@ export function RevisionSession() {
             Reflection
             <Textarea
               className="mt-2"
-              value={reflection}
-              onChange={(e) => setReflection(e.target.value)}
+              value={revision.reflection}
+              onChange={(e) => {
+                const value = e.target.value;
+                setRevision((prev) =>
+                  prev ? { ...prev, reflection: value } : prev,
+                );
+                saveRevisionReflection(revision.id, value);
+              }}
               placeholder="What felt clearer this time?"
             />
           </label>

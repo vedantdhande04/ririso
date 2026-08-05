@@ -13,7 +13,11 @@ import {
   loadDaySessions,
   type StudySessionLocal,
 } from "@/lib/session-storage";
-import type { LocalRevision } from "@/lib/revision-storage";
+import {
+  liveRevisionMs,
+  revisionHref,
+  type LocalRevision,
+} from "@/lib/revision-storage";
 
 type SessionBlocksProps = {
   sessions: StudySessionLocal[];
@@ -166,7 +170,9 @@ export function SessionBlocks({
         className={`rounded-[20px] border border-border-soft p-4 ${
           revision?.completedAt
             ? "bg-pastel-green/30"
-            : "bg-pastel-yellow/35"
+            : revision?.runStatus === "active" || revision?.runStatus === "paused"
+              ? "bg-pastel-pink/25"
+              : "bg-pastel-yellow/35"
         }`}
       >
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -178,25 +184,43 @@ export function SessionBlocks({
             <p className="text-caption">
               {revision?.completedAt
                 ? "Completed"
-                : "Start anytime — no clock required"}
+                : revision?.runStatus === "active"
+                  ? `Running · ${formatDuration(liveRevisionMs(revision))}`
+                  : revision?.runStatus === "paused"
+                    ? `Paused · ${formatDuration(liveRevisionMs(revision))}`
+                    : "Start anytime — no clock required"}
             </p>
           </div>
           <span
             className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
               revision?.completedAt
                 ? "bg-pastel-green/50 text-pastel-green-deep"
-                : "bg-warm-white text-muted border border-border-soft"
+                : revision?.runStatus === "active"
+                  ? "bg-pastel-green/50 text-pastel-green-deep"
+                  : revision?.runStatus === "paused"
+                    ? "bg-pastel-yellow/70 text-charcoal"
+                    : "bg-warm-white text-muted border border-border-soft"
             }`}
           >
-            {revision?.completedAt ? "Completed" : "Ready"}
+            {revision?.completedAt
+              ? "Completed"
+              : revision?.runStatus === "active"
+                ? "Live"
+                : revision?.runStatus === "paused"
+                  ? "Paused"
+                  : "Ready"}
           </span>
         </div>
         {!revision?.completedAt ? (
           <Link
-            href="/revision?type=same_day"
+            href={revisionHref("same_day")}
             className="touch-target mt-3 inline-flex items-center justify-center rounded-[var(--radius-button)] bg-pastel-pink px-4 py-2 text-sm font-semibold text-charcoal"
           >
-            {revision ? "Start / resume revision" : "Open revision"}
+            {revision?.runStatus === "active" || revision?.runStatus === "paused"
+              ? "Open running revision"
+              : revision
+                ? "Start revision"
+                : "Open revision"}
           </Link>
         ) : null}
       </div>

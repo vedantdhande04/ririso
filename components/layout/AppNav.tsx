@@ -12,6 +12,10 @@ import {
 } from "lucide-react";
 
 import {
+  getOpenRevision,
+  revisionHref,
+} from "@/lib/revision-storage";
+import {
   getOpenSession,
   sessionHref,
 } from "@/lib/session-storage";
@@ -24,13 +28,27 @@ const links = [
   { href: "/topics", label: "Topics", icon: BookOpen },
 ] as const;
 
-function useOpenSessionId() {
+function useLiveSessionDest() {
   const pathname = usePathname();
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [dest, setDest] = useState("/session");
+  const [live, setLive] = useState(false);
 
   useEffect(() => {
     function refresh() {
-      setOpenId(getOpenSession()?.id ?? null);
+      const openRev = getOpenRevision();
+      const openStudy = getOpenSession();
+      if (openRev) {
+        setDest(revisionHref(openRev.revisionType));
+        setLive(true);
+        return;
+      }
+      if (openStudy) {
+        setDest(sessionHref(openStudy.id));
+        setLive(true);
+        return;
+      }
+      setDest("/session");
+      setLive(false);
     }
     refresh();
     window.addEventListener("focus", refresh);
@@ -43,13 +61,21 @@ function useOpenSessionId() {
     };
   }, [pathname]);
 
-  return openId;
+  return { dest, live };
+}
+
+function isSessionSection(pathname: string) {
+  return (
+    pathname === "/session" ||
+    pathname.startsWith("/session/") ||
+    pathname === "/revision" ||
+    pathname.startsWith("/revision")
+  );
 }
 
 export function AppNav() {
   const pathname = usePathname();
-  const openSessionId = useOpenSessionId();
-  const sessionLink = sessionHref(openSessionId);
+  const { dest: sessionLink, live: sessionLive } = useLiveSessionDest();
 
   return (
     <>
@@ -65,8 +91,9 @@ export function AppNav() {
             const active =
               href === "/"
                 ? pathname === "/"
-                : pathname === href || pathname.startsWith(`${href}/`);
-            const sessionLive = href === "/session" && Boolean(openSessionId);
+                : href === "/session"
+                  ? isSessionSection(pathname)
+                  : pathname === href || pathname.startsWith(`${href}/`);
             return (
               <li key={href} className="flex-1">
                 <Link
@@ -79,7 +106,7 @@ export function AppNav() {
                 >
                   <Icon size={20} strokeWidth={1.75} />
                   <span>{label}</span>
-                  {sessionLive ? (
+                  {href === "/session" && sessionLive ? (
                     <span
                       aria-hidden
                       className="absolute right-2 top-1.5 h-2 w-2 rounded-full bg-pastel-green-deep"
@@ -107,8 +134,9 @@ export function AppNav() {
             const active =
               href === "/"
                 ? pathname === "/"
-                : pathname === href || pathname.startsWith(`${href}/`);
-            const sessionLive = href === "/session" && Boolean(openSessionId);
+                : href === "/session"
+                  ? isSessionSection(pathname)
+                  : pathname === href || pathname.startsWith(`${href}/`);
             return (
               <li key={href}>
                 <Link
@@ -121,7 +149,7 @@ export function AppNav() {
                 >
                   <span className="relative">
                     <Icon size={18} strokeWidth={1.75} />
-                    {sessionLive ? (
+                    {href === "/session" && sessionLive ? (
                       <span
                         aria-hidden
                         className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-pastel-green-deep"
@@ -129,7 +157,7 @@ export function AppNav() {
                     ) : null}
                   </span>
                   {label}
-                  {sessionLive ? (
+                  {href === "/session" && sessionLive ? (
                     <span className="ml-auto text-[10px] font-semibold text-pastel-green-deep">
                       Live
                     </span>
