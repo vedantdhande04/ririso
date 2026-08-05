@@ -67,6 +67,11 @@ function writeMeta(updatedAt: string) {
   window.localStorage.setItem(META_KEY, JSON.stringify(meta));
 }
 
+function clearMeta() {
+  if (typeof window === "undefined") return;
+  window.localStorage.removeItem(META_KEY);
+}
+
 function collectLocalPayload(): SyncPayload {
   const payload: SyncPayload = {};
   if (typeof window === "undefined") return payload;
@@ -121,6 +126,14 @@ function sanitizeForToday(payload: SyncPayload): SyncPayload {
   return next;
 }
 
+function emptyPayload(): SyncPayload {
+  const payload: SyncPayload = {};
+  for (const key of SYNC_STORAGE_KEYS) {
+    payload[key] = null;
+  }
+  return payload;
+}
+
 function applyPayload(payload: SyncPayload) {
   if (typeof window === "undefined") return;
   applyingRemote = true;
@@ -146,6 +159,12 @@ function applyPayload(payload: SyncPayload) {
       applyingRemote = false;
     }, 0);
   }
+}
+
+/** Cloud wipe landed — clear synced keys so this device cannot reseed. */
+function applyCloudWipe(remoteUpdatedAt: string) {
+  applyPayload(emptyPayload());
+  writeMeta(remoteUpdatedAt);
 }
 
 export function notifyLocalDataChanged() {
@@ -213,6 +232,9 @@ async function upsertRemote(
 /**
  * Cloud-first pull. Committed plans on the server always win over empty
  * local drafts so a fresh phone never overwrites laptop work.
+ *
+ * An empty cloud snapshot with a newer timestamp is a wipe — clear local
+ * and never re-upload stale cache.
  */
 export async function pullRemoteState(): Promise<
   "applied" | "pushed" | "noop" | "skipped" | "error"
@@ -230,6 +252,13 @@ export async function pullRemoteState(): Promise<
     const localCommitted = isCommittedToday(localPlan);
 
     if (!remote) {
+      // Row deleted after this device had synced → wipe, do not reseed
+      if (meta) {
+        applyPayload(emptyPayload());
+        clearMeta();
+        return "applied";
+      }
+      // First-ever bootstrap from a committed local day
       if (localHasAnyData(localPayload) && localCommitted) {
         const now = new Date().toISOString();
         await upsertRemote(userId, localPayload, now);
@@ -243,6 +272,19 @@ export async function pullRemoteState(): Promise<
     const remoteUpdated = remote.updated_at;
     const remotePlan = planFromPayload(remotePayload);
     const remoteCommitted = isCommittedToday(remotePlan);
+    const remoteEmpty = !localHasAnyData(remotePayload);
+
+    // Empty cloud newer than this device → wipe local (handover reset)
+    if (remoteEmpty && (!localUpdated || remoteUpdated > localUpdated)) {
+      applyCloudWipe(remoteUpdated);
+      return "applied";
+    }
+
+    // Stale local clock trying to outrun an empty wipe
+    if (remoteEmpty && localUpdated && localUpdated > remoteUpdated) {
+      applyCloudWipe(remoteUpdated);
+      return "applied";
+    }
 
     // Empty / uncommitted phone must never clobber a pledged laptop day
     if (remoteCommitted && !localCommitted) {
@@ -268,7 +310,6 @@ export async function pullRemoteState(): Promise<
         await upsertRemote(userId, localPayload, localUpdated);
         return "pushed";
       }
-      // Local clock is newer but only a draft — keep remote truth
       applyPayload(remotePayload);
       writeMeta(remoteUpdated);
       return "applied";
@@ -289,21 +330,43 @@ export async function pushLocalState(): Promise<boolean> {
 
   try {
     const payload = collectLocalPayload();
-    // Don't publish an empty uncommitted draft over an existing committed cloud day
     const localPlan = planFromPayload(payload);
     if (!isCommittedToday(localPlan) && !localHasAnyData(payload)) {
       return false;
     }
 
     const remote = await fetchRemote(userId);
+    const meta = readMeta();
+
     if (remote) {
-      const remotePlan = planFromPayload(remote.payload as SyncPayload);
-      if (isCommittedToday(remotePlan) && !isCommittedToday(localPlan)) {
-        // Keep cloud; re-apply remote instead of wiping it
-        applyPayload(remote.payload as SyncPayload);
+      const remotePayload = (remote.payload ?? {}) as SyncPayload;
+      const remotePlan = planFromPayload(remotePayload);
+      const remoteEmpty = !localHasAnyData(remotePayload);
+
+      // Empty cloud = wipe marker. Only push over it after this device
+      // has already absorbed that wipe (meta >= remote time). Otherwise
+      // stale localStorage would undo the SQL reset.
+      if (remoteEmpty) {
+        if (meta && meta.updatedAt >= remote.updated_at) {
+          // fall through — new plan after wipe
+        } else {
+          applyCloudWipe(remote.updated_at);
+          return false;
+        }
+      } else if (isCommittedToday(remotePlan) && !isCommittedToday(localPlan)) {
+        applyPayload(remotePayload);
+        writeMeta(remote.updated_at);
+        return false;
+      } else if (meta && remote.updated_at > meta.updatedAt) {
+        applyPayload(remotePayload);
         writeMeta(remote.updated_at);
         return false;
       }
+    } else if (meta) {
+      // Sync row deleted after prior use — wipe local, don't recreate from cache
+      applyPayload(emptyPayload());
+      clearMeta();
+      return false;
     }
 
     const now = new Date().toISOString();
