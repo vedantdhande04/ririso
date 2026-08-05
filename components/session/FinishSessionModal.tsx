@@ -97,7 +97,22 @@ export function FinishSessionModal({
     : "accent-[var(--pastel-green-deep)]";
 
   return (
-    <Modal open={open} title="How did this topic go?" onClose={onCancel}>
+    <Modal
+      open={open}
+      title="How did this topic go?"
+      onClose={onCancel}
+      footer={
+        <Button
+          className="w-full"
+          onClick={() => {
+            setSparkle(true);
+            onSave({ percent, learned, remaining, notes });
+          }}
+        >
+          Save session <Sparkle show={sparkle} />
+        </Button>
+      }
+    >
       <p className="text-caption">
         How much of this topic is completed overall?
       </p>
@@ -178,18 +193,6 @@ export function FinishSessionModal({
       <div className="mt-5">
         <p className="mb-2 text-sm font-medium text-charcoal">Session notes</p>
         <SessionNotesPanel value={notes} onChange={setNotes} compact />
-      </div>
-
-      <div className="mt-6 flex items-center gap-2">
-        <Button
-          className="w-full"
-          onClick={() => {
-            setSparkle(true);
-            onSave({ percent, learned, remaining, notes });
-          }}
-        >
-          Save session <Sparkle show={sparkle} />
-        </Button>
       </div>
     </Modal>
   );
