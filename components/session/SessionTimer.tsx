@@ -40,6 +40,7 @@ import {
   hasPledgedToday,
   loadTodayPlan,
 } from "@/lib/planning-storage";
+import { syncEvents } from "@/lib/device-sync";
 
 type GateMessage = {
   title: string;
@@ -174,10 +175,12 @@ function SessionTimerInner() {
     window.addEventListener("focus", syncFromStorage);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("ririso:sessions-changed", syncFromStorage);
+    window.addEventListener(syncEvents.syncApplied, boot);
     return () => {
       window.removeEventListener("focus", syncFromStorage);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("ririso:sessions-changed", syncFromStorage);
+      window.removeEventListener(syncEvents.syncApplied, boot);
     };
   }, [boot, sessionId]);
 

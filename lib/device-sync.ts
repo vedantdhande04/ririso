@@ -1,7 +1,8 @@
 import { createBrowserClient } from "@/lib/supabase/client";
+import { getStudyDayKey } from "@/lib/date";
 import type { Json } from "@/lib/supabase/types";
 
-/** localStorage keys that sync across devices (analytics cache stays local). */
+/** localStorage keys that sync across devices (analytics cache stays device-local). */
 export const SYNC_STORAGE_KEYS = [
   "ririso:daily-plan",
   "ririso:sessions",
@@ -14,17 +15,31 @@ export const SYNC_STORAGE_KEYS = [
 const META_KEY = "ririso:sync-meta";
 const LOCAL_CHANGED = "ririso:local-changed";
 const SYNC_APPLIED = "ririso:sync-applied";
+const SYNC_HYDRATED = "ririso:sync-hydrated";
 
-export type SyncPayload = Partial<Record<(typeof SYNC_STORAGE_KEYS)[number], string | null>>;
+export type SyncPayload = Partial<
+  Record<(typeof SYNC_STORAGE_KEYS)[number], string | null>
+>;
 
 type SyncMeta = {
   updatedAt: string;
   deviceId: string;
 };
 
+type PlanShape = {
+  planDate?: string;
+  pledgedAt?: string | null;
+  status?: string;
+};
+
+type SessionsShape = {
+  planDate?: string;
+};
+
 let applyingRemote = false;
 let pushTimer: ReturnType<typeof setTimeout> | number | null = null;
 let cachedUserId: string | null = null;
+let hydrated = false;
 
 function deviceId(): string {
   if (typeof window === "undefined") return "server";
@@ -61,19 +76,58 @@ function collectLocalPayload(): SyncPayload {
   return payload;
 }
 
-function localHasData(payload: SyncPayload): boolean {
+function parseJson<T>(raw: string | null | undefined): T | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function planFromPayload(payload: SyncPayload): PlanShape | null {
+  return parseJson<PlanShape>(payload["ririso:daily-plan"] ?? null);
+}
+
+/** Today's plan counts only if pledged or explicitly rest. */
+function isCommittedToday(plan: PlanShape | null): boolean {
+  if (!plan) return false;
+  if (plan.planDate !== getStudyDayKey()) return false;
+  return Boolean(plan.pledgedAt) || plan.status === "rest" || plan.status === "pledged";
+}
+
+function localHasAnyData(payload: SyncPayload): boolean {
   return SYNC_STORAGE_KEYS.some((key) => {
     const value = payload[key];
     return Boolean(value && value !== "null" && value !== "[]" && value !== "{}");
   });
 }
 
+/** Drop stale day-scoped blobs so yesterday never pretends to be today. */
+function sanitizeForToday(payload: SyncPayload): SyncPayload {
+  const next: SyncPayload = { ...payload };
+  const today = getStudyDayKey();
+
+  const plan = planFromPayload(next);
+  if (plan && plan.planDate && plan.planDate !== today) {
+    next["ririso:daily-plan"] = null;
+  }
+
+  const sessions = parseJson<SessionsShape>(next["ririso:sessions"] ?? null);
+  if (sessions?.planDate && sessions.planDate !== today) {
+    next["ririso:sessions"] = null;
+  }
+
+  return next;
+}
+
 function applyPayload(payload: SyncPayload) {
   if (typeof window === "undefined") return;
   applyingRemote = true;
   try {
+    const clean = sanitizeForToday(payload);
     for (const key of SYNC_STORAGE_KEYS) {
-      const value = payload[key];
+      const value = clean[key];
       if (value == null || value === "") {
         window.localStorage.removeItem(key);
       } else {
@@ -83,13 +137,11 @@ function applyPayload(payload: SyncPayload) {
     window.dispatchEvent(new Event(SYNC_APPLIED));
     window.dispatchEvent(new Event("ririso:sessions-changed"));
     try {
-      // Soft-refresh analytics after remote apply
       window.localStorage.removeItem("ririso:analytics-cache");
     } catch {
       /* ignore */
     }
   } finally {
-    // Allow listeners to settle before re-enabling push
     window.setTimeout(() => {
       applyingRemote = false;
     }, 0);
@@ -99,6 +151,17 @@ function applyPayload(payload: SyncPayload) {
 export function notifyLocalDataChanged() {
   if (typeof window === "undefined" || applyingRemote) return;
   window.dispatchEvent(new Event(LOCAL_CHANGED));
+}
+
+export function isSyncHydrated() {
+  return hydrated;
+}
+
+export function markSyncHydrated() {
+  hydrated = true;
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SYNC_HYDRATED));
+  }
 }
 
 export async function resolveUserId(): Promise<string | null> {
@@ -130,12 +193,16 @@ async function fetchRemote(userId: string) {
   return data as { payload: SyncPayload; updated_at: string } | null;
 }
 
-async function upsertRemote(userId: string, payload: SyncPayload, updatedAt: string) {
+async function upsertRemote(
+  userId: string,
+  payload: SyncPayload,
+  updatedAt: string,
+) {
   const supabase = createBrowserClient();
   const { error } = await supabase.from("app_sync_state").upsert(
     {
       user_id: userId,
-      payload: payload as Json,
+      payload: sanitizeForToday(payload) as Json,
       updated_at: updatedAt,
     },
     { onConflict: "user_id" },
@@ -143,8 +210,13 @@ async function upsertRemote(userId: string, payload: SyncPayload, updatedAt: str
   if (error) throw error;
 }
 
-/** Pull cloud state and merge with local (newer updatedAt wins). */
-export async function pullRemoteState(): Promise<"applied" | "pushed" | "noop" | "skipped"> {
+/**
+ * Cloud-first pull. Committed plans on the server always win over empty
+ * local drafts so a fresh phone never overwrites laptop work.
+ */
+export async function pullRemoteState(): Promise<
+  "applied" | "pushed" | "noop" | "skipped" | "error"
+> {
   if (typeof window === "undefined") return "skipped";
   const userId = await resolveUserId();
   if (!userId) return "skipped";
@@ -154,9 +226,11 @@ export async function pullRemoteState(): Promise<"applied" | "pushed" | "noop" |
     const localPayload = collectLocalPayload();
     const meta = readMeta();
     const localUpdated = meta?.updatedAt ?? null;
+    const localPlan = planFromPayload(localPayload);
+    const localCommitted = isCommittedToday(localPlan);
 
     if (!remote) {
-      if (localHasData(localPayload)) {
+      if (localHasAnyData(localPayload) && localCommitted) {
         const now = new Date().toISOString();
         await upsertRemote(userId, localPayload, now);
         writeMeta(now);
@@ -167,8 +241,17 @@ export async function pullRemoteState(): Promise<"applied" | "pushed" | "noop" |
 
     const remotePayload = (remote.payload ?? {}) as SyncPayload;
     const remoteUpdated = remote.updated_at;
+    const remotePlan = planFromPayload(remotePayload);
+    const remoteCommitted = isCommittedToday(remotePlan);
 
-    if (!localHasData(localPayload) && localHasData(remotePayload)) {
+    // Empty / uncommitted phone must never clobber a pledged laptop day
+    if (remoteCommitted && !localCommitted) {
+      applyPayload(remotePayload);
+      writeMeta(remoteUpdated);
+      return "applied";
+    }
+
+    if (!localHasAnyData(localPayload) && localHasAnyData(remotePayload)) {
       applyPayload(remotePayload);
       writeMeta(remoteUpdated);
       return "applied";
@@ -181,14 +264,20 @@ export async function pullRemoteState(): Promise<"applied" | "pushed" | "noop" |
     }
 
     if (localUpdated > remoteUpdated) {
-      await upsertRemote(userId, localPayload, localUpdated);
-      return "pushed";
+      if (localCommitted || !remoteCommitted) {
+        await upsertRemote(userId, localPayload, localUpdated);
+        return "pushed";
+      }
+      // Local clock is newer but only a draft — keep remote truth
+      applyPayload(remotePayload);
+      writeMeta(remoteUpdated);
+      return "applied";
     }
 
     return "noop";
   } catch (err) {
     console.warn("Device sync pull failed", err);
-    return "skipped";
+    return "error";
   }
 }
 
@@ -200,6 +289,23 @@ export async function pushLocalState(): Promise<boolean> {
 
   try {
     const payload = collectLocalPayload();
+    // Don't publish an empty uncommitted draft over an existing committed cloud day
+    const localPlan = planFromPayload(payload);
+    if (!isCommittedToday(localPlan) && !localHasAnyData(payload)) {
+      return false;
+    }
+
+    const remote = await fetchRemote(userId);
+    if (remote) {
+      const remotePlan = planFromPayload(remote.payload as SyncPayload);
+      if (isCommittedToday(remotePlan) && !isCommittedToday(localPlan)) {
+        // Keep cloud; re-apply remote instead of wiping it
+        applyPayload(remote.payload as SyncPayload);
+        writeMeta(remote.updated_at);
+        return false;
+      }
+    }
+
     const now = new Date().toISOString();
     await upsertRemote(userId, payload, now);
     writeMeta(now);
@@ -210,8 +316,8 @@ export async function pushLocalState(): Promise<boolean> {
   }
 }
 
-export function schedulePushLocalState(delayMs = 700) {
-  if (typeof window === "undefined" || applyingRemote) return;
+export function schedulePushLocalState(delayMs = 400) {
+  if (typeof window === "undefined" || applyingRemote || !hydrated) return;
   if (pushTimer) window.clearTimeout(pushTimer);
   pushTimer = window.setTimeout(() => {
     pushTimer = null;
@@ -219,7 +325,17 @@ export function schedulePushLocalState(delayMs = 700) {
   }, delayMs);
 }
 
+/** Awaitable push used after pledge / important writes. */
+export async function flushLocalState() {
+  if (pushTimer) {
+    window.clearTimeout(pushTimer);
+    pushTimer = null;
+  }
+  return pushLocalState();
+}
+
 export const syncEvents = {
   localChanged: LOCAL_CHANGED,
   syncApplied: SYNC_APPLIED,
+  syncHydrated: SYNC_HYDRATED,
 } as const;

@@ -3,7 +3,7 @@ import { Nunito, Quicksand } from "next/font/google";
 
 import { AppNav } from "@/components/layout/AppNav";
 import { PlanningGate } from "@/components/planning/PlanningGate";
-import { DeviceSync } from "@/components/sync/DeviceSync";
+import { SyncProvider } from "@/components/sync/SyncProvider";
 import { SoftConfetti } from "@/components/ui/SoftConfetti";
 
 import "./globals.css";
@@ -44,13 +44,14 @@ export default function RootLayout({
       className={`${nunito.variable} ${quicksand.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col font-sans">
-        <div className="flex flex-1 flex-col pb-20 md:pb-0 md:pl-56">
-          {children}
-        </div>
-        <AppNav />
-        <PlanningGate />
-        <DeviceSync />
-        <SoftConfetti />
+        <SyncProvider>
+          <div className="flex flex-1 flex-col pb-20 md:pb-0 md:pl-56">
+            {children}
+          </div>
+          <AppNav />
+          <PlanningGate />
+          <SoftConfetti />
+        </SyncProvider>
       </body>
     </html>
   );

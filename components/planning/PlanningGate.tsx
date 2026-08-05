@@ -31,6 +31,8 @@ import {
   type DailyPlanLocal,
   type ShiftSelection,
 } from "@/lib/planning-storage";
+import { syncAfterCommit, useSync } from "@/components/sync/SyncProvider";
+import { syncEvents } from "@/lib/device-sync";
 import type { ShiftSlot } from "@/lib/supabase/types";
 
 const SHIFT_META: {
@@ -50,6 +52,7 @@ const SHIFT_META: {
 
 export function PlanningGate() {
   const router = useRouter();
+  const { hydrated } = useSync();
   const [ready, setReady] = useState(false);
   const [open, setOpen] = useState(false);
   const [plan, setPlan] = useState<DailyPlanLocal>(emptyPlan());
@@ -60,25 +63,33 @@ export function PlanningGate() {
   );
 
   useEffect(() => {
-    const today = loadTodayPlan();
-    setPlan(today);
-    const mustPlan = isPastPlanningGate() && !hasPledgedToday();
-    setOpen(mustPlan);
-    setReady(true);
+    if (!hydrated) return;
 
-    if (!mustPlan) return;
+    function evaluate() {
+      const today = loadTodayPlan();
+      setPlan(today);
+      const mustPlan = isPastPlanningGate() && !hasPledgedToday();
+      setOpen(mustPlan);
+      setReady(true);
 
-    void fetchCatalog()
-      .then((data) => {
-        setCatalog(data);
-        setCatalogError(null);
-      })
-      .catch((err: unknown) => {
-        const message =
-          err instanceof Error ? err.message : "Could not load subjects";
-        setCatalogError(message);
-      });
-  }, []);
+      if (!mustPlan) return;
+
+      void fetchCatalog()
+        .then((data) => {
+          setCatalog(data);
+          setCatalogError(null);
+        })
+        .catch((err: unknown) => {
+          const message =
+            err instanceof Error ? err.message : "Could not load subjects";
+          setCatalogError(message);
+        });
+    }
+
+    evaluate();
+    window.addEventListener(syncEvents.syncApplied, evaluate);
+    return () => window.removeEventListener(syncEvents.syncApplied, evaluate);
+  }, [hydrated]);
 
   useEffect(() => {
     if (catalog.length === 0) return;
@@ -259,7 +270,7 @@ export function PlanningGate() {
     }
   }
 
-  function continueToPledge() {
+  async function continueToPledge() {
     const activeCount = countActiveShifts(plan);
     const next: DailyPlanLocal = {
       ...plan,
@@ -270,13 +281,14 @@ export function PlanningGate() {
     setPlan(next);
     setOpen(false);
     if (activeCount === 0) {
+      await syncAfterCommit();
       router.refresh();
       return;
     }
     router.push("/commit");
   }
 
-  if (!ready || !open) return null;
+  if (!hydrated || !ready || !open) return null;
 
   return (
     <Modal open locked title="Plan your study day">
@@ -329,7 +341,7 @@ export function PlanningGate() {
         <Button
           className="w-full"
           disabled={!canContinue || Boolean(catalogError)}
-          onClick={continueToPledge}
+          onClick={() => void continueToPledge()}
         >
           {countActiveShifts(plan) === 0
             ? "Rest day — save plan"

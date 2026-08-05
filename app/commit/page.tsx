@@ -16,10 +16,12 @@ import {
 } from "@/lib/planning-storage";
 import { resetQueueFromPlan } from "@/lib/session-storage";
 import { ensureSameDayRevision } from "@/lib/revision-storage";
+import { syncAfterCommit } from "@/components/sync/SyncProvider";
 
 export default function CommitPage() {
   const router = useRouter();
   const [plan, setPlan] = useState<DailyPlanLocal | null>(null);
+  const [saving, setSaving] = useState(false);
   const pledge = useMemo(
     () => pledgeVariants[Math.floor(Math.random() * pledgeVariants.length)],
     [],
@@ -33,8 +35,9 @@ export default function CommitPage() {
     }
   }, [router]);
 
-  function pledgeAndStart() {
-    if (!plan) return;
+  async function pledgeAndStart() {
+    if (!plan || saving) return;
+    setSaving(true);
     const next: DailyPlanLocal = {
       ...plan,
       status: "pledged",
@@ -43,6 +46,7 @@ export default function CommitPage() {
     saveTodayPlan(next);
     resetQueueFromPlan();
     void ensureSameDayRevision();
+    await syncAfterCommit();
     router.push("/");
   }
 
@@ -57,8 +61,12 @@ export default function CommitPage() {
         <p className="text-caption">Daily commitment</p>
         <h1 className="text-greeting mt-3">A quiet promise</h1>
         <p className="text-quote mt-4">{supportive.readyFirst}</p>
-        <Button className="mt-8 w-full text-base md:text-lg" onClick={pledgeAndStart}>
-          {pledge}
+        <Button
+          className="mt-8 w-full text-base md:text-lg"
+          disabled={saving}
+          onClick={() => void pledgeAndStart()}
+        >
+          {saving ? "Saving to cloud…" : pledge}
         </Button>
       </Card>
     </PageShell>
