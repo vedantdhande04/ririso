@@ -40,7 +40,11 @@ import {
   hasPledgedToday,
   loadTodayPlan,
 } from "@/lib/planning-storage";
-import { syncEvents } from "@/lib/device-sync";
+import {
+  flushLocalState,
+  pullRemoteState,
+  syncEvents,
+} from "@/lib/device-sync";
 
 type GateMessage = {
   title: string;
@@ -156,7 +160,7 @@ function SessionTimerInner() {
     boot();
   }, [boot]);
 
-  // Re-read storage after tab switch — never change paused → active here
+  // Re-read storage after tab switch / cloud sync — never change paused → active here
   useEffect(() => {
     function syncFromStorage() {
       setNow(Date.now());
@@ -164,23 +168,41 @@ function SessionTimerInner() {
       setState(day);
       if (sessionId) {
         const latest = getSessionById(sessionId, day);
-        if (latest) setSession(latest);
+        if (latest) {
+          setSession(latest);
+          setGate(null);
+        } else {
+          boot();
+        }
       } else {
         boot();
       }
     }
-    function onVisibility() {
-      if (document.visibilityState === "visible") syncFromStorage();
+
+    async function pullThenSync() {
+      const result = await pullRemoteState();
+      if (result === "applied" || result === "pushed" || result === "noop") {
+        syncFromStorage();
+      }
     }
-    window.addEventListener("focus", syncFromStorage);
+
+    function onFocus() {
+      void pullThenSync();
+    }
+
+    function onVisibility() {
+      if (document.visibilityState === "visible") void pullThenSync();
+    }
+
+    window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("ririso:sessions-changed", syncFromStorage);
-    window.addEventListener(syncEvents.syncApplied, boot);
+    window.addEventListener(syncEvents.syncApplied, syncFromStorage);
     return () => {
-      window.removeEventListener("focus", syncFromStorage);
+      window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("ririso:sessions-changed", syncFromStorage);
-      window.removeEventListener(syncEvents.syncApplied, boot);
+      window.removeEventListener(syncEvents.syncApplied, syncFromStorage);
     };
   }, [boot, sessionId]);
 
@@ -242,19 +264,21 @@ function SessionTimerInner() {
     router.push(nav.href);
   }
 
-  function onPause(reason: string | null) {
+  async function onPause(reason: string | null) {
     if (!session || !state) return;
     const next = pauseSession(state, session.id, reason);
     setState(next);
     setSession(next.sessions.find((s) => s.id === session.id) ?? null);
     setShowPauseReasons(false);
+    await flushLocalState();
   }
 
-  function onResume() {
+  async function onResume() {
     if (!session || !state) return;
     const next = resumeSession(state, session.id);
     setState(next);
     setSession(next.sessions.find((s) => s.id === session.id) ?? null);
+    await flushLocalState();
   }
 
   async function afterFinish(next: DaySessionsState) {
@@ -399,7 +423,7 @@ function SessionTimerInner() {
               <Button
                 className="w-full sm:w-40"
                 disabled={saving}
-                onClick={onResume}
+                onClick={() => void onResume()}
               >
                 Resume
               </Button>

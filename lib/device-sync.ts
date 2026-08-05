@@ -174,20 +174,30 @@ function statusRank(status: string): number {
   return 0;
 }
 
-function approxElapsedMs(s: SessionMergeShape, now = Date.now()): number {
-  if (s.status === "pending" || s.status === "completed" || s.status === "skipped") {
-    return s.accumulatedStudyMs;
+/** When the last play/pause/finish action happened (not live tick time). */
+function stateChangedAt(s: SessionMergeShape): number {
+  if (s.status === "paused" && s.activePauseStartedAt) {
+    return new Date(s.activePauseStartedAt).getTime();
   }
-  if (s.status === "paused") return s.accumulatedStudyMs;
-  if (!s.startedAt) return s.accumulatedStudyMs;
-  const lastEnded = [...s.pauses].reverse().find((p) => p.endedAt);
-  const segmentStart = lastEnded?.endedAt
-    ? new Date(lastEnded.endedAt).getTime()
-    : new Date(s.startedAt).getTime();
-  return s.accumulatedStudyMs + Math.max(0, now - segmentStart);
+  if (s.status === "active") {
+    const lastEnded = [...(s.pauses ?? [])].reverse().find((p) => p.endedAt);
+    if (lastEnded?.endedAt) return new Date(lastEnded.endedAt).getTime();
+    if (s.startedAt) return new Date(s.startedAt).getTime();
+  }
+  if (
+    (s.status === "completed" || s.status === "skipped") &&
+    s.endedAt
+  ) {
+    return new Date(s.endedAt).getTime();
+  }
+  return 0;
 }
 
-/** Prefer real progress so a late "Start" on another device cannot wipe a running timer. */
+/**
+ * Prefer the latest control action (pause/resume/finish).
+ * Never let a still-ticking "active" copy beat a newer pause just because
+ * its live elapsed seconds grew on screen.
+ */
 function pickBetterSession(
   a: SessionMergeShape,
   b: SessionMergeShape,
@@ -197,15 +207,41 @@ function pickBetterSession(
   if (ra === 0 && rb > 0) return b;
   if (rb === 0 && ra > 0) return a;
 
-  if (a.status === "active" && b.status === "active") {
-    const aStart = a.startedAt ? new Date(a.startedAt).getTime() : Number.POSITIVE_INFINITY;
-    const bStart = b.startedAt ? new Date(b.startedAt).getTime() : Number.POSITIVE_INFINITY;
-    if (aStart !== bStart) return aStart < bStart ? a : b;
+  if (ra >= 4 || rb >= 4) {
+    if (ra !== rb) return ra > rb ? a : b;
+    return stateChangedAt(a) >= stateChangedAt(b) ? a : b;
   }
 
-  const ea = approxElapsedMs(a);
-  const eb = approxElapsedMs(b);
-  if (Math.abs(ea - eb) > 1500) return ea > eb ? a : b;
+  const aRun = a.status === "active" || a.status === "paused";
+  const bRun = b.status === "active" || b.status === "paused";
+  if (aRun && bRun) {
+    if (a.status !== b.status) {
+      return stateChangedAt(a) >= stateChangedAt(b) ? a : b;
+    }
+
+    if (a.status === "paused" && b.status === "paused") {
+      if (a.accumulatedStudyMs !== b.accumulatedStudyMs) {
+        return a.accumulatedStudyMs > b.accumulatedStudyMs ? a : b;
+      }
+      return stateChangedAt(a) >= stateChangedAt(b) ? a : b;
+    }
+
+    // both active — richer history / banked time, then earlier start
+    if (a.pauseCount !== b.pauseCount) {
+      return a.pauseCount > b.pauseCount ? a : b;
+    }
+    if (a.accumulatedStudyMs !== b.accumulatedStudyMs) {
+      return a.accumulatedStudyMs > b.accumulatedStudyMs ? a : b;
+    }
+    const aStart = a.startedAt
+      ? new Date(a.startedAt).getTime()
+      : Number.POSITIVE_INFINITY;
+    const bStart = b.startedAt
+      ? new Date(b.startedAt).getTime()
+      : Number.POSITIVE_INFINITY;
+    if (aStart !== bStart) return aStart < bStart ? a : b;
+    return stateChangedAt(a) >= stateChangedAt(b) ? a : b;
+  }
 
   if (ra !== rb) return ra > rb ? a : b;
 
