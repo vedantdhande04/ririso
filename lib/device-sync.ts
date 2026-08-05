@@ -134,6 +134,140 @@ function emptyPayload(): SyncPayload {
   return payload;
 }
 
+type SessionMergeShape = {
+  id: string;
+  shift: string;
+  topicId: string;
+  isExtra?: boolean;
+  status: string;
+  startedAt: string | null;
+  endedAt?: string | null;
+  accumulatedStudyMs: number;
+  pauseMs: number;
+  pauseCount: number;
+  pauses: Array<{ startedAt: string; endedAt: string | null }>;
+  activePauseStartedAt: string | null;
+  notesLearned?: string;
+  notesRemaining?: string;
+  notesQuick?: string;
+  notesDoubt?: string;
+  notesFact?: string;
+  notesMistake?: string;
+  completionPercent?: number | null;
+};
+
+type DaySessionsMerge = {
+  planDate: string;
+  sessions: SessionMergeShape[];
+};
+
+function sessionIdentity(s: SessionMergeShape): string {
+  if (s.isExtra) return `extra:${s.id}`;
+  return `${s.shift}:${s.topicId}`;
+}
+
+function statusRank(status: string): number {
+  if (status === "completed") return 5;
+  if (status === "skipped") return 4;
+  if (status === "active") return 3;
+  if (status === "paused") return 2;
+  return 0;
+}
+
+function approxElapsedMs(s: SessionMergeShape, now = Date.now()): number {
+  if (s.status === "pending" || s.status === "completed" || s.status === "skipped") {
+    return s.accumulatedStudyMs;
+  }
+  if (s.status === "paused") return s.accumulatedStudyMs;
+  if (!s.startedAt) return s.accumulatedStudyMs;
+  const lastEnded = [...s.pauses].reverse().find((p) => p.endedAt);
+  const segmentStart = lastEnded?.endedAt
+    ? new Date(lastEnded.endedAt).getTime()
+    : new Date(s.startedAt).getTime();
+  return s.accumulatedStudyMs + Math.max(0, now - segmentStart);
+}
+
+/** Prefer real progress so a late "Start" on another device cannot wipe a running timer. */
+function pickBetterSession(
+  a: SessionMergeShape,
+  b: SessionMergeShape,
+): SessionMergeShape {
+  const ra = statusRank(a.status);
+  const rb = statusRank(b.status);
+  if (ra === 0 && rb > 0) return b;
+  if (rb === 0 && ra > 0) return a;
+
+  if (a.status === "active" && b.status === "active") {
+    const aStart = a.startedAt ? new Date(a.startedAt).getTime() : Number.POSITIVE_INFINITY;
+    const bStart = b.startedAt ? new Date(b.startedAt).getTime() : Number.POSITIVE_INFINITY;
+    if (aStart !== bStart) return aStart < bStart ? a : b;
+  }
+
+  const ea = approxElapsedMs(a);
+  const eb = approxElapsedMs(b);
+  if (Math.abs(ea - eb) > 1500) return ea > eb ? a : b;
+
+  if (ra !== rb) return ra > rb ? a : b;
+
+  const noteLen = (s: SessionMergeShape) =>
+    [
+      s.notesLearned,
+      s.notesRemaining,
+      s.notesQuick,
+      s.notesDoubt,
+      s.notesFact,
+      s.notesMistake,
+    ]
+      .join("")
+      .length;
+  if (noteLen(a) !== noteLen(b)) return noteLen(a) > noteLen(b) ? a : b;
+
+  return a.pauseCount >= b.pauseCount ? a : b;
+}
+
+function mergeSessionsJson(
+  leftRaw: string | null | undefined,
+  rightRaw: string | null | undefined,
+): string | null {
+  const left = parseJson<DaySessionsMerge>(leftRaw ?? null);
+  const right = parseJson<DaySessionsMerge>(rightRaw ?? null);
+  if (!left && !right) return null;
+  if (!left) return rightRaw ?? null;
+  if (!right) return leftRaw ?? null;
+
+  const today = getStudyDayKey();
+  if (left.planDate === today && right.planDate !== today) return leftRaw ?? null;
+  if (right.planDate === today && left.planDate !== today) return rightRaw ?? null;
+
+  const byKey = new Map<string, SessionMergeShape>();
+  for (const session of left.sessions) {
+    byKey.set(sessionIdentity(session), session);
+  }
+  for (const session of right.sessions) {
+    const key = sessionIdentity(session);
+    const existing = byKey.get(key);
+    byKey.set(key, existing ? pickBetterSession(existing, session) : session);
+  }
+
+  const merged: DaySessionsMerge = {
+    planDate: left.planDate === today || right.planDate !== today
+      ? left.planDate
+      : right.planDate,
+    sessions: Array.from(byKey.values()),
+  };
+  return JSON.stringify(merged);
+}
+
+/** Newer blob wins for most keys; sessions always merge by progress. */
+function mergeSyncPayloads(newer: SyncPayload, older: SyncPayload): SyncPayload {
+  const out: SyncPayload = { ...older, ...newer };
+  out["ririso:sessions"] = mergeSessionsJson(
+    newer["ririso:sessions"],
+    older["ririso:sessions"],
+  );
+  return out;
+}
+
 function applyPayload(payload: SyncPayload) {
   if (typeof window === "undefined") return;
   applyingRemote = true;
@@ -288,8 +422,14 @@ export async function pullRemoteState(): Promise<
 
     // Empty / uncommitted phone must never clobber a pledged laptop day
     if (remoteCommitted && !localCommitted) {
-      applyPayload(remotePayload);
+      const merged = mergeSyncPayloads(remotePayload, localPayload);
+      applyPayload(merged);
       writeMeta(remoteUpdated);
+      if (merged["ririso:sessions"] !== remotePayload["ririso:sessions"]) {
+        const now = new Date().toISOString();
+        await upsertRemote(userId, merged, now);
+        writeMeta(now);
+      }
       return "applied";
     }
 
@@ -300,19 +440,43 @@ export async function pullRemoteState(): Promise<
     }
 
     if (!localUpdated || remoteUpdated > localUpdated) {
-      applyPayload(remotePayload);
-      writeMeta(remoteUpdated);
+      const merged = mergeSyncPayloads(remotePayload, localPayload);
+      applyPayload(merged);
+      if (merged["ririso:sessions"] !== remotePayload["ririso:sessions"]) {
+        const now = new Date().toISOString();
+        await upsertRemote(userId, merged, now);
+        writeMeta(now);
+      } else {
+        writeMeta(remoteUpdated);
+      }
       return "applied";
     }
 
     if (localUpdated > remoteUpdated) {
       if (localCommitted || !remoteCommitted) {
-        await upsertRemote(userId, localPayload, localUpdated);
+        const merged = mergeSyncPayloads(localPayload, remotePayload);
+        applyPayload(merged);
+        const now = new Date().toISOString();
+        await upsertRemote(userId, merged, now);
+        writeMeta(now);
         return "pushed";
       }
-      applyPayload(remotePayload);
+      const merged = mergeSyncPayloads(remotePayload, localPayload);
+      applyPayload(merged);
       writeMeta(remoteUpdated);
       return "applied";
+    }
+
+    // Same timestamp — still merge sessions in case both moved
+    {
+      const merged = mergeSyncPayloads(localPayload, remotePayload);
+      if (merged["ririso:sessions"] !== localPayload["ririso:sessions"]) {
+        applyPayload(merged);
+        const now = new Date().toISOString();
+        await upsertRemote(userId, merged, now);
+        writeMeta(now);
+        return "applied";
+      }
     }
 
     return "noop";
@@ -354,13 +518,23 @@ export async function pushLocalState(): Promise<boolean> {
           return false;
         }
       } else if (isCommittedToday(remotePlan) && !isCommittedToday(localPlan)) {
-        applyPayload(remotePayload);
+        const merged = mergeSyncPayloads(
+          remote.payload as SyncPayload,
+          payload,
+        );
+        applyPayload(merged);
         writeMeta(remote.updated_at);
         return false;
-      } else if (meta && remote.updated_at > meta.updatedAt) {
-        applyPayload(remotePayload);
-        writeMeta(remote.updated_at);
-        return false;
+      } else {
+        // Always merge sessions before push so a pending PC cannot
+        // overwrite an active phone timer (or vice versa).
+        const remotePayload = remote.payload as SyncPayload;
+        const merged = mergeSyncPayloads(payload, remotePayload);
+        applyPayload(merged);
+        const now = new Date().toISOString();
+        await upsertRemote(userId, merged, now);
+        writeMeta(now);
+        return true;
       }
     } else if (meta) {
       // Sync row deleted after prior use — wipe local, don't recreate from cache

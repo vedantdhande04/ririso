@@ -95,9 +95,13 @@ export function SyncProvider({ children }: { children: ReactNode }) {
 
     const poll = window.setInterval(() => {
       if (document.visibilityState === "visible" && isSyncHydrated()) {
-        void pullRemoteState();
+        void pullRemoteState().then((result) => {
+          if (result === "applied") {
+            window.dispatchEvent(new Event(syncEvents.syncApplied));
+          }
+        });
       }
-    }, 30_000);
+    }, 4_000);
 
     return () => {
       cancelled = true;

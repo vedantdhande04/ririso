@@ -1,7 +1,7 @@
 import { invalidateAnalyticsCache } from "@/lib/analytics-cache";
 import { getStudyDayKey } from "@/lib/date";
 import { archiveSession } from "@/lib/history-storage";
-import { notifyLocalDataChanged } from "@/lib/device-sync";
+import { flushLocalState, notifyLocalDataChanged } from "@/lib/device-sync";
 import type { ShiftSlot } from "@/lib/supabase/types";
 import {
   loadTodayPlan,
@@ -210,6 +210,8 @@ export function saveDaySessions(state: DaySessionsState) {
   window.localStorage.setItem(KEY, JSON.stringify(clean));
   window.dispatchEvent(new Event("ririso:sessions-changed"));
   notifyLocalDataChanged();
+  // Session start/pause must hit the cloud before another device opens
+  void flushLocalState();
 }
 
 function sessionKey(s: Pick<StudySessionLocal, "shift" | "topicId" | "isExtra" | "id">) {
