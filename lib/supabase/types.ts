@@ -23,12 +23,14 @@ export type NoteType =
   | "learned"
   | "remaining";
 export type RevisionType =
+  | "session"
   | "same_day"
   | "next_day"
   | "weekly"
   | "fifteen_day"
   | "monthly";
 export type CalendarEventType =
+  | "session_revision"
   | "same_day_revision"
   | "next_day_revision"
   | "weekly_revision"

@@ -89,10 +89,10 @@ export function HomeDashboard() {
   const [progress, setProgress] = useState(0);
   const [sessions, setSessions] = useState<StudySessionLocal[]>([]);
   const [revision, setRevision] = useState<LocalRevision | null>(null);
+  const [yesterdayRev, setYesterdayRev] = useState<LocalRevision | null>(null);
   const [alerts, setAlerts] = useState<Array<{ date: string; label: string }>>(
     [],
   );
-  const [yesterdayRevision, setYesterdayRevision] = useState(false);
   const [momentLine, setMomentLine] = useState<string>(supportive.emptyToday);
   const [cta, setCta] = useState<{ href: string; label: string } | null>(null);
   const [showExtra, setShowExtra] = useState(false);
@@ -116,24 +116,27 @@ export function HomeDashboard() {
       setProgress(Math.round((resolved / total) * 100));
       setRemainingSessions(Math.max(blocks.length - resolved, 0));
 
-      const studiedMs = blocks.reduce((sum, s) => {
-        if (s.status === "pending") return sum;
-        return sum + liveElapsedMs(s);
-      }, 0);
-      setHoursLabel(formatDuration(studiedMs));
-
       let sameDay = getSameDayRevision();
       if (pledgedToday && plan.status !== "rest") {
         sameDay = await ensureSameDayRevision();
       }
+      const nextDay = getNextDayRevisionForToday();
+
+      const studiedMs = blocks.reduce((sum, s) => {
+        if (s.status === "pending") return sum;
+        return sum + liveElapsedMs(s);
+      }, 0);
+      const revMs =
+        (sameDay?.studyMs ?? 0) +
+        (nextDay?.completedAt ? nextDay.studyMs : 0);
+      setHoursLabel(formatDuration(studiedMs + revMs));
+
       setRevision(sameDay);
+      setYesterdayRev(nextDay && !nextDay.completedAt ? nextDay : null);
 
       setAlerts(
         getUpcomingAlerts(3).map((a) => ({ date: a.date, label: a.label })),
       );
-
-      const nextDay = getNextDayRevisionForToday();
-      setYesterdayRevision(Boolean(nextDay && !nextDay.completedAt));
 
       const current = blocks.find(
         (s) => s.status === "active" || s.status === "paused",
@@ -159,22 +162,22 @@ export function HomeDashboard() {
           href: sessionHref(current.id),
           label: current.status === "paused" ? "Resume session" : "Open timer",
         });
+      } else if (nextDay && !nextDay.completedAt) {
+        setCta({
+          href: `/revision?type=next_day&id=${nextDay.id}`,
+          label: "Start Yesterday's Revision",
+        });
       } else if (
         allStudyBlocksResolved(day) &&
         sameDay &&
         !sameDay.completedAt
       ) {
         setCta({
-          href: "/revision?type=same_day",
-          label: "Start same-day revision",
+          href: "/revisions",
+          label: "Open Revisions",
         });
       } else if (sameDay?.completedAt && allStudyBlocksResolved(day)) {
         setCta({ href: "/analytics", label: "See today's gentle insights" });
-      } else if (nextDay && !nextDay.completedAt) {
-        setCta({
-          href: "/revision?type=next_day",
-          label: "Start Yesterday's Revision",
-        });
       } else {
         setCta(null);
       }
@@ -216,6 +219,7 @@ export function HomeDashboard() {
               <SessionBlocks
                 sessions={sessions}
                 revision={revision}
+                yesterdayRevision={yesterdayRev}
                 onChanged={refresh}
                 onAddExtra={() => setShowExtra(true)}
               />
@@ -265,15 +269,15 @@ export function HomeDashboard() {
           </Card>
           <Card doodle={<Doodle name="heart" size={28} />}>
             <p className="text-caption">Calendar alerts</p>
-            {yesterdayRevision ? (
+            {yesterdayRev ? (
               <Link
-                href="/revision?type=next_day"
+                href={`/revision?type=next_day&id=${yesterdayRev.id}`}
                 className="mt-2 block text-sm font-semibold text-pastel-green-deep"
               >
                 {supportive.revisionPending}
               </Link>
             ) : null}
-            {alerts.length === 0 && !yesterdayRevision ? (
+            {alerts.length === 0 && !yesterdayRev ? (
               <p className="text-quote mt-2">{supportive.calendarQuiet}</p>
             ) : (
               <ul className="mt-2 space-y-1">

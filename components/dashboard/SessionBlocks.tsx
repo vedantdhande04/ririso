@@ -22,6 +22,7 @@ import {
 type SessionBlocksProps = {
   sessions: StudySessionLocal[];
   revision: LocalRevision | null;
+  yesterdayRevision?: LocalRevision | null;
   onChanged?: () => void;
   onAddExtra?: () => void;
 };
@@ -61,6 +62,7 @@ function statusClass(status: StudySessionLocal["status"]) {
 export function SessionBlocks({
   sessions,
   revision,
+  yesterdayRevision = null,
   onChanged,
   onAddExtra,
 }: SessionBlocksProps) {
@@ -166,6 +168,29 @@ export function SessionBlocks({
         })
       )}
 
+      {yesterdayRevision && !yesterdayRevision.completedAt ? (
+        <div className="rounded-[20px] border border-border-soft bg-pastel-yellow/40 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="text-caption">Todo</p>
+              <p className="font-display text-base font-semibold text-charcoal">
+                Yesterday&apos;s revision
+              </p>
+              <p className="text-caption">Revisit yesterday&apos;s study notes</p>
+            </div>
+            <span className="rounded-full border border-border-soft bg-warm-white px-2.5 py-1 text-xs font-semibold text-muted">
+              Ready
+            </span>
+          </div>
+          <Link
+            href={revisionHref("next_day", yesterdayRevision.id)}
+            className="touch-target mt-3 inline-flex items-center justify-center rounded-[var(--radius-button)] bg-pastel-pink px-4 py-2 text-sm font-semibold text-charcoal"
+          >
+            Open yesterday&apos;s revision
+          </Link>
+        </div>
+      ) : null}
+
       <div
         className={`rounded-[20px] border border-border-soft p-4 ${
           revision?.completedAt
@@ -188,7 +213,7 @@ export function SessionBlocks({
                   ? `Running · ${formatDuration(liveRevisionMs(revision))}`
                   : revision?.runStatus === "paused"
                     ? `Paused · ${formatDuration(liveRevisionMs(revision))}`
-                    : "Start anytime — no clock required"}
+                    : "End-of-day review — optional anytime"}
             </p>
           </div>
           <span
@@ -211,18 +236,24 @@ export function SessionBlocks({
                   : "Ready"}
           </span>
         </div>
-        {!revision?.completedAt ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {!revision?.completedAt ? (
+            <Link
+              href={revisionHref("same_day", revision?.id)}
+              className="touch-target inline-flex items-center justify-center rounded-[var(--radius-button)] bg-pastel-pink px-4 py-2 text-sm font-semibold text-charcoal"
+            >
+              {revision?.runStatus === "active" || revision?.runStatus === "paused"
+                ? "Open timer"
+                : "Open daily revision"}
+            </Link>
+          ) : null}
           <Link
-            href={revisionHref("same_day")}
-            className="touch-target mt-3 inline-flex items-center justify-center rounded-[var(--radius-button)] bg-pastel-pink px-4 py-2 text-sm font-semibold text-charcoal"
+            href="/revisions"
+            className="touch-target inline-flex items-center justify-center rounded-[var(--radius-button)] border border-border-soft bg-warm-white px-4 py-2 text-sm font-semibold text-charcoal"
           >
-            {revision?.runStatus === "active" || revision?.runStatus === "paused"
-              ? "Open running revision"
-              : revision
-                ? "Start revision"
-                : "Open revision"}
+            All revisions
           </Link>
-        ) : null}
+        </div>
       </div>
 
       {onAddExtra ? (

@@ -294,7 +294,7 @@ function mergeSessionsJson(
   return JSON.stringify(merged);
 }
 
-/** Prefer non-empty JSON; never let a missing key wipe the other device. */
+/** Prefer non-empty JSON; revisions merge by id + latest mutation. */
 function preferPresentJson(
   newer: string | null | undefined,
   older: string | null | undefined,
@@ -302,12 +302,33 @@ function preferPresentJson(
   const n = newer && newer !== "null" && newer !== "[]" && newer !== "{}" ? newer : null;
   const o = older && older !== "null" && older !== "[]" && older !== "{}" ? older : null;
   if (n && o) {
-    // Prefer the longer / richer blob when both exist (revision lists grow)
     try {
       const nArr = JSON.parse(n) as unknown;
       const oArr = JSON.parse(o) as unknown;
       if (Array.isArray(nArr) && Array.isArray(oArr)) {
-        return nArr.length >= oArr.length ? n : o;
+        type Rev = {
+          id: string;
+          lastMutatedAt?: string | null;
+          studyMs?: number;
+          runStatus?: string;
+        };
+        const map = new Map<string, Rev>();
+        for (const item of [...(oArr as Rev[]), ...(nArr as Rev[])]) {
+          if (!item?.id) continue;
+          const prev = map.get(item.id);
+          if (!prev) {
+            map.set(item.id, item);
+            continue;
+          }
+          const prevT = prev.lastMutatedAt ?? "";
+          const nextT = item.lastMutatedAt ?? "";
+          if (nextT > prevT) map.set(item.id, item);
+          else if (nextT === prevT && (item.studyMs ?? 0) >= (prev.studyMs ?? 0)) {
+            map.set(item.id, item);
+          }
+        }
+        // Also keep items only present in one side without id collision by type+date for non-session
+        return JSON.stringify(Array.from(map.values()));
       }
     } catch {
       /* fall through */

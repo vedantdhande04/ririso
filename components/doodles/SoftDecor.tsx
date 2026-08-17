@@ -18,6 +18,13 @@ export function SoftDecor() {
   const pathname = usePathname();
 
   const accents: Accent[] = (() => {
+    if (pathname.startsWith("/revisions") || pathname.startsWith("/revision")) {
+      return [
+        { name: "book", size: 40, className: "right-3 top-10 rotate-6 opacity-[0.3]" },
+        { name: "leaf", size: 36, className: "left-2 bottom-36 -rotate-8 opacity-[0.28] sm:left-6" },
+        { name: "spark", size: 32, className: "right-5 bottom-44 opacity-[0.26]" },
+      ];
+    }
     if (pathname.startsWith("/session")) {
       return [
         { name: "spiral", size: 42, className: "left-2 top-8 -rotate-6 opacity-[0.34] sm:left-4" },

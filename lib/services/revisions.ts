@@ -2,14 +2,16 @@ import { createServerClient } from "@/lib/supabase/server";
 import type { RevisionType } from "@/lib/supabase/types";
 
 const revisionLabels: Record<RevisionType, string> = {
-  same_day: "Same Day Revision",
-  next_day: "Tomorrow Revision",
+  session: "Session Revision",
+  same_day: "Daily Revision",
+  next_day: "Yesterday's Revision",
   weekly: "Weekly Revision",
   fifteen_day: "15 Day Revision",
   monthly: "Monthly Revision",
 };
 
 const revisionEventType = {
+  session: "session_revision",
   same_day: "same_day_revision",
   next_day: "next_day_revision",
   weekly: "weekly_revision",

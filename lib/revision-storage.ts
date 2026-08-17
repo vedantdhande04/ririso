@@ -24,9 +24,12 @@ export type LocalRevision = {
   reflection: string;
   rangeStart: string | null;
   rangeEnd: string | null;
-  /** Timer run — persisted so refresh / Session tab can resume. */
   runStatus: RevisionRunStatus;
   segmentStartedAt: string | null;
+  /** Study session this optional overlook belongs to. */
+  sourceSessionId: string | null;
+  /** Latest pause/resume/start — newer device wins on sync. */
+  lastMutatedAt: string | null;
 };
 
 export type CalendarSticker = {
@@ -39,13 +42,21 @@ export type CalendarSticker = {
 const REV_KEY = "ririso:revisions";
 const CAL_KEY = "ririso:calendar-events";
 
-const labels: Record<RevisionType, string> = {
-  same_day: "Same Day Revision",
-  next_day: "Tomorrow Revision",
-  weekly: "Weekly Revision",
-  fifteen_day: "15 Day Revision",
-  monthly: "Monthly Revision",
+export const revisionLabels: Record<RevisionType, string> = {
+  session: "Session revision",
+  same_day: "Daily revision",
+  next_day: "Yesterday's revision",
+  weekly: "Weekly revision",
+  fifteen_day: "15 day revision",
+  monthly: "Monthly revision",
 };
+
+export function revisionDisplayTitle(r: LocalRevision): string {
+  if (r.revisionType === "session" && r.topicNames[0]) {
+    return `Session revision · ${r.topicNames[0]}`;
+  }
+  return revisionLabels[r.revisionType] ?? "Revision";
+}
 
 function normalizeRevision(raw: LocalRevision): LocalRevision {
   const completed = Boolean(raw.completedAt);
@@ -53,6 +64,8 @@ function normalizeRevision(raw: LocalRevision): LocalRevision {
     ...raw,
     reflection: raw.reflection ?? "",
     studyMs: raw.studyMs ?? 0,
+    sourceSessionId: raw.sourceSessionId ?? null,
+    lastMutatedAt: raw.lastMutatedAt ?? null,
     runStatus: completed
       ? "pending"
       : raw.runStatus === "active" || raw.runStatus === "paused"
@@ -64,9 +77,14 @@ function normalizeRevision(raw: LocalRevision): LocalRevision {
 
 function blankRunFields(): Pick<
   LocalRevision,
-  "runStatus" | "segmentStartedAt"
+  "runStatus" | "segmentStartedAt" | "sourceSessionId" | "lastMutatedAt"
 > {
-  return { runStatus: "pending", segmentStartedAt: null };
+  return {
+    runStatus: "pending",
+    segmentStartedAt: null,
+    sourceSessionId: null,
+    lastMutatedAt: null,
+  };
 }
 
 function loadRevisions(): LocalRevision[] {
@@ -108,7 +126,8 @@ function saveStickers(items: CalendarSticker[]) {
   notifyLocalDataChanged();
 }
 
-export function revisionHref(type: RevisionType = "same_day") {
+export function revisionHref(type: RevisionType = "same_day", id?: string) {
+  if (id) return `/revision?type=${type}&id=${encodeURIComponent(id)}`;
   return `/revision?type=${type}`;
 }
 
@@ -135,12 +154,36 @@ export function getOpenRevision(planDate = getStudyDayKey()) {
   );
 }
 
+export function getRevisionById(id: string) {
+  return loadRevisions().find((r) => r.id === id) ?? null;
+}
+
 export function getRevisionsForDate(dateKey: string) {
   return loadRevisions().filter((r) => r.scheduledFor === dateKey);
 }
 
 export function getAllRevisions() {
   return loadRevisions();
+}
+
+/** Today's revision todos: yesterday's + daily + open session oversights. */
+export function getTodayRevisionTodos(planDate = getStudyDayKey()) {
+  const all = loadRevisions().filter((r) => r.scheduledFor === planDate);
+  const yesterday = all.find((r) => r.revisionType === "next_day") ?? null;
+  const daily = all.find((r) => r.revisionType === "same_day") ?? null;
+  const weekly = all.find((r) => r.revisionType === "weekly") ?? null;
+  const fifteen = all.find((r) => r.revisionType === "fifteen_day") ?? null;
+  const monthly = all.find((r) => r.revisionType === "monthly") ?? null;
+  const sessions = all.filter((r) => r.revisionType === "session");
+  return { yesterday, daily, weekly, fifteen, monthly, sessions };
+}
+
+export function getUpcomingRevisions(limit = 12) {
+  const today = getStudyDayKey();
+  return loadRevisions()
+    .filter((r) => !r.completedAt && r.scheduledFor >= today)
+    .sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor))
+    .slice(0, limit);
 }
 
 export function getStickersForMonth(year: number, monthIndex: number) {
@@ -158,30 +201,37 @@ export function getUpcomingAlerts(limit = 3) {
 
 function upsertLocalRevision(revision: LocalRevision) {
   const normalized = normalizeRevision(revision);
-  const all = loadRevisions().filter(
-    (r) =>
-      !(
-        r.revisionType === normalized.revisionType &&
-        r.scheduledFor === normalized.scheduledFor
-      ),
-  );
+  const all = loadRevisions().filter((r) => {
+    if (normalized.revisionType === "session") {
+      if (normalized.sourceSessionId) {
+        return r.sourceSessionId !== normalized.sourceSessionId;
+      }
+      return r.id !== normalized.id;
+    }
+    return !(
+      r.revisionType === normalized.revisionType &&
+      r.scheduledFor === normalized.scheduledFor
+    );
+  });
   all.push(normalized);
   saveRevisions(all);
 
-  const stickers = loadStickers().filter(
-    (s) =>
-      !(
-        s.revisionType === normalized.revisionType &&
-        s.date === normalized.scheduledFor
-      ),
-  );
-  stickers.push({
-    date: normalized.scheduledFor,
-    revisionType: normalized.revisionType,
-    label: labels[normalized.revisionType],
-    revisionId: normalized.id,
-  });
-  saveStickers(stickers);
+  if (normalized.revisionType !== "session") {
+    const stickers = loadStickers().filter(
+      (s) =>
+        !(
+          s.revisionType === normalized.revisionType &&
+          s.date === normalized.scheduledFor
+        ),
+    );
+    stickers.push({
+      date: normalized.scheduledFor,
+      revisionType: normalized.revisionType,
+      label: revisionLabels[normalized.revisionType],
+      revisionId: normalized.id,
+    });
+    saveStickers(stickers);
+  }
   return normalized;
 }
 
@@ -190,9 +240,14 @@ function patchRevision(
   patch: Partial<LocalRevision>,
 ): LocalRevision | null {
   let updated: LocalRevision | null = null;
+  const stamp = new Date().toISOString();
   const all = loadRevisions().map((r) => {
     if (r.id !== revisionId) return r;
-    updated = normalizeRevision({ ...r, ...patch });
+    updated = normalizeRevision({
+      ...r,
+      ...patch,
+      lastMutatedAt: stamp,
+    });
     return updated;
   });
   if (!updated) return null;
@@ -229,13 +284,14 @@ async function syncRevisionToSupabase(revision: LocalRevision) {
       user_id: user.id,
       event_date: revision.scheduledFor,
       event_type: `${revision.revisionType}_revision` as
+        | "session_revision"
         | "same_day_revision"
         | "next_day_revision"
         | "weekly_revision"
         | "fifteen_day_revision"
         | "monthly_revision",
       revision_id: data.id,
-      label: labels[revision.revisionType],
+      label: revisionLabels[revision.revisionType],
     });
   } catch (err) {
     console.warn("Supabase revision sync failed", err);
@@ -249,6 +305,7 @@ function newRevisionDraft(input: {
   topicNames: string[];
   rangeStart: string | null;
   rangeEnd: string | null;
+  sourceSessionId?: string | null;
 }): LocalRevision {
   return {
     id: crypto.randomUUID(),
@@ -262,6 +319,7 @@ function newRevisionDraft(input: {
     rangeStart: input.rangeStart,
     rangeEnd: input.rangeEnd,
     ...blankRunFields(),
+    sourceSessionId: input.sourceSessionId ?? null,
   };
 }
 
@@ -294,6 +352,7 @@ export async function ensureSameDayRevision() {
 }
 
 function refreshRevisionTopics(revision: LocalRevision) {
+  if (revision.revisionType === "session") return revision;
   const day = loadDaySessions();
   const topicIds = [...new Set(day.sessions.map((s) => s.topicId))];
   const topicNames = [
@@ -302,16 +361,43 @@ function refreshRevisionTopics(revision: LocalRevision) {
   return upsertLocalRevision({ ...revision, topicIds, topicNames });
 }
 
-/** Start pending revision, or resume paused. */
+/** Optional short overlook after finishing one study block. */
+export function createSessionRevision(input: {
+  sessionId: string;
+  topicId: string;
+  topicName: string;
+}): LocalRevision {
+  const existing = loadRevisions().find(
+    (r) =>
+      r.revisionType === "session" && r.sourceSessionId === input.sessionId,
+  );
+  if (existing) return existing;
+
+  const planDate = getStudyDayKey();
+  const draft = newRevisionDraft({
+    revisionType: "session",
+    scheduledFor: planDate,
+    topicIds: [input.topicId],
+    topicNames: [input.topicName],
+    rangeStart: planDate,
+    rangeEnd: planDate,
+    sourceSessionId: input.sessionId,
+  });
+  upsertLocalRevision(draft);
+  void syncRevisionToSupabase(draft);
+  invalidateAnalyticsCache();
+  return draft;
+}
+
+/**
+ * Start only when pending. Never auto-resume a paused timer —
+ * call resumeRevisionTimer explicitly from the Resume button.
+ */
 export function beginRevisionTimer(revisionId: string): LocalRevision | null {
   const current = loadRevisions().find((r) => r.id === revisionId);
   if (!current || current.completedAt) return current ?? null;
-  if (current.runStatus === "active") return current;
-  if (current.runStatus === "paused") {
-    return patchRevision(revisionId, {
-      runStatus: "active",
-      segmentStartedAt: new Date().toISOString(),
-    });
+  if (current.runStatus === "active" || current.runStatus === "paused") {
+    return current;
   }
   return patchRevision(revisionId, {
     runStatus: "active",
@@ -353,13 +439,14 @@ export function heartbeatRevisionTimer(
     return current ?? null;
   }
   const studied = liveRevisionMs(current);
+  const stamp = new Date().toISOString();
   const updated = normalizeRevision({
     ...current,
     studyMs: studied,
-    segmentStartedAt: new Date().toISOString(),
+    segmentStartedAt: stamp,
+    lastMutatedAt: stamp,
   });
   const all = loadRevisions().map((r) => (r.id === revisionId ? updated : r));
-  // Quiet write — avoid cloud push every few seconds
   writeRevisionsLocal(all);
   return updated;
 }
@@ -415,16 +502,21 @@ export async function schedulePostStudyRevisions() {
   upsertLocalRevision(sameDay);
   if (!sameDayExisting) await syncRevisionToSupabase(sameDay);
 
-  const nextDayRev = newRevisionDraft({
-    revisionType: "next_day",
-    scheduledFor: nextDay,
-    topicIds,
-    topicNames,
-    rangeStart: planDate,
-    rangeEnd: planDate,
-  });
-  upsertLocalRevision(nextDayRev);
-  await syncRevisionToSupabase(nextDayRev);
+  const nextExisting = loadRevisions().find(
+    (r) => r.revisionType === "next_day" && r.scheduledFor === nextDay,
+  );
+  if (!nextExisting) {
+    const nextDayRev = newRevisionDraft({
+      revisionType: "next_day",
+      scheduledFor: nextDay,
+      topicIds,
+      topicNames,
+      rangeStart: planDate,
+      rangeEnd: planDate,
+    });
+    upsertLocalRevision(nextDayRev);
+    await syncRevisionToSupabase(nextDayRev);
+  }
 
   if (weekday(planDate) === 0) {
     const weekly = newRevisionDraft({
@@ -507,9 +599,26 @@ export function getRevisionForTodayByType(
 ) {
   if (revisionType === "same_day") return getSameDayRevision(planDate);
   if (revisionType === "next_day") return getNextDayRevisionForToday(planDate);
+  if (revisionType === "session") {
+    return (
+      loadRevisions().find(
+        (r) =>
+          r.revisionType === "session" &&
+          r.scheduledFor === planDate &&
+          !r.completedAt,
+      ) ?? null
+    );
+  }
   return (
     loadRevisions().find(
       (r) => r.revisionType === revisionType && r.scheduledFor === planDate,
     ) ?? null
   );
+}
+
+/** Total revision study ms for a plan date (counts toward study time). */
+export function revisionStudyMsForDate(planDate: string) {
+  return loadRevisions()
+    .filter((r) => r.scheduledFor === planDate)
+    .reduce((sum, r) => sum + liveRevisionMs(r), 0);
 }

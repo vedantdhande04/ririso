@@ -16,35 +16,35 @@ import {
   beginRevisionTimer,
   completeRevision,
   ensureSameDayRevision,
+  getRevisionById,
   getRevisionForTodayByType,
   heartbeatRevisionTimer,
   liveRevisionMs,
   pauseRevisionTimer,
   resumeRevisionTimer,
+  revisionDisplayTitle,
   saveRevisionReflection,
   type LocalRevision,
 } from "@/lib/revision-storage";
 import { formatDuration } from "@/lib/session-storage";
 import type { RevisionType } from "@/lib/supabase/types";
 
-const TITLES: Record<string, string> = {
-  same_day: "Same day revision",
-  next_day: "Yesterday's revision",
-  weekly: "Weekly revision",
-  fifteen_day: "15 day revision",
-  monthly: "Monthly revision",
-};
+const KNOWN: RevisionType[] = [
+  "session",
+  "same_day",
+  "next_day",
+  "weekly",
+  "fifteen_day",
+  "monthly",
+];
 
 export function RevisionSession() {
   const router = useRouter();
   const params = useSearchParams();
   const typeParam = params.get("type") ?? "same_day";
+  const idParam = params.get("id");
   const type = (
-    ["same_day", "next_day", "weekly", "fifteen_day", "monthly"].includes(
-      typeParam,
-    )
-      ? typeParam
-      : "same_day"
+    KNOWN.includes(typeParam as RevisionType) ? typeParam : "same_day"
   ) as RevisionType;
 
   const [revision, setRevision] = useState<LocalRevision | null>(null);
@@ -55,32 +55,25 @@ export function RevisionSession() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      let found = getRevisionForTodayByType(type);
-      if (type === "same_day") {
-        found = (await ensureSameDayRevision()) ?? found;
-      }
-      if (cancelled || !found) {
-        if (!cancelled) {
-          setRevision(null);
-          setReady(true);
+      let found: LocalRevision | null = null;
+      if (idParam) {
+        found = getRevisionById(idParam);
+      } else {
+        found = getRevisionForTodayByType(type);
+        if (!found && type === "same_day") {
+          found = (await ensureSameDayRevision()) ?? found;
         }
-        return;
       }
-      if (found.completedAt) {
-        setRevision(found);
-        setReady(true);
-        return;
-      }
-      // Persist start so Session tab / refresh can return here
-      const running = beginRevisionTimer(found.id) ?? found;
-      setRevision(running);
+      if (cancelled) return;
+      // Never auto-start or auto-resume — user must press Start / Resume
+      setRevision(found);
       setReady(true);
     }
     void load();
     return () => {
       cancelled = true;
     };
-  }, [type]);
+  }, [type, idParam]);
 
   useEffect(() => {
     if (!revision || revision.completedAt || revision.runStatus !== "active") {
@@ -119,6 +112,8 @@ export function RevisionSession() {
 
   const elapsed = revision ? liveRevisionMs(revision, now) : 0;
   const isPaused = revision?.runStatus === "paused";
+  const isActive = revision?.runStatus === "active";
+  const isPending = revision?.runStatus === "pending" && !revision.completedAt;
 
   if (!ready) {
     return (
@@ -134,11 +129,11 @@ export function RevisionSession() {
         <Card>
           <h1 className="text-greeting">Revision</h1>
           <p className="text-quote mt-3">
-            No revision block for this type yet. Pledge today&apos;s plan first,
-            or open Daily Revision from home anytime after pledging.
+            No revision block for this type yet. Check the Revisions tab for
+            today&apos;s list.
           </p>
-          <Button className="mt-6" onClick={() => router.push("/session")}>
-            Back to sessions
+          <Button className="mt-6" onClick={() => router.push("/revisions")}>
+            Open Revisions
           </Button>
         </Card>
       </PageShell>
@@ -151,14 +146,21 @@ export function RevisionSession() {
         <Card>
           <h1 className="text-greeting">Revision complete</h1>
           <p className="text-quote mt-3">
-            Lovely work revisiting today&apos;s pages.
+            Lovely work revisiting —{" "}
+            {formatDuration(revision.studyMs)} counted as study time.
           </p>
-          <Button className="mt-6" onClick={() => router.push("/session")}>
-            Back to sessions
+          <Button className="mt-6" onClick={() => router.push("/revisions")}>
+            Back to Revisions
           </Button>
         </Card>
       </PageShell>
     );
+  }
+
+  function onStart() {
+    if (!revision) return;
+    const next = beginRevisionTimer(revision.id);
+    if (next) setRevision(next);
   }
 
   function onPause() {
@@ -195,32 +197,41 @@ export function RevisionSession() {
           className="text-center md:min-h-[60vh]"
           doodle={<Doodle name="book" size={32} />}
         >
-          <p className="text-caption">{TITLES[type] ?? "Revision"}</p>
+          <p className="text-caption">{revisionDisplayTitle(revision)}</p>
           <h1 className="text-greeting mt-2">Gently revisit</h1>
           {isPaused ? (
             <span className="mt-3 inline-block rounded-full bg-pastel-yellow/70 px-3 py-1 text-xs font-semibold text-charcoal">
-              Paused — open Session anytime to resume
+              Paused — stays paused until you resume
+            </span>
+          ) : null}
+          {isPending ? (
+            <span className="mt-3 inline-block rounded-full border border-border-soft bg-warm-white px-3 py-1 text-xs font-semibold text-muted">
+              Ready when you are
             </span>
           ) : null}
           <p
             className={`mt-8 font-display text-5xl font-semibold md:text-6xl ${
-              isPaused ? "text-muted" : "text-pastel-green-deep"
+              isPaused || isPending ? "text-muted" : "text-pastel-green-deep"
             }`}
             aria-live="polite"
           >
             {formatDuration(elapsed)}
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
-            {isPaused ? (
-              <Button onClick={onResume}>Resume</Button>
-            ) : (
+            {isPending ? (
+              <Button onClick={onStart}>Start revision</Button>
+            ) : null}
+            {isActive ? (
               <Button variant="secondary" onClick={onPause}>
                 Pause
               </Button>
+            ) : null}
+            {isPaused ? <Button onClick={onResume}>Resume</Button> : null}
+            {(isActive || isPaused) && (
+              <Button variant="selected" onClick={onFinish}>
+                Finish revision <Sparkle show={sparkle} />
+              </Button>
             )}
-            <Button variant="selected" onClick={onFinish}>
-              Finish revision <Sparkle show={sparkle} />
-            </Button>
           </div>
           <label className="mt-8 block text-left text-sm font-medium text-charcoal">
             Reflection

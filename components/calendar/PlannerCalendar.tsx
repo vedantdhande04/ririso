@@ -16,6 +16,7 @@ import { supportive } from "@/lib/copy";
 import type { RevisionType } from "@/lib/supabase/types";
 
 const stickerEmoji: Record<RevisionType, string> = {
+  session: "✨",
   same_day: "🍀",
   next_day: "📌",
   weekly: "📖",

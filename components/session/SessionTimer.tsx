@@ -16,13 +16,15 @@ import { celebrateDayComplete } from "@/lib/confetti";
 import { shiftLabels, timerNudge } from "@/lib/copy";
 import { saveSessionNotes, type SessionNotes } from "@/lib/notes-storage";
 import {
-  ensureSameDayRevision,
+  createSessionRevision,
+  getNextDayRevisionForToday,
   getSameDayRevision,
   liveRevisionMs,
   revisionHref,
   schedulePostStudyRevisions,
   type LocalRevision,
 } from "@/lib/revision-storage";
+import { Modal } from "@/components/ui/Modal";
 import {
   allStudyBlocksResolved,
   beginSessionNavigation,
@@ -73,6 +75,14 @@ function SessionTimerInner() {
   const [showPauseReasons, setShowPauseReasons] = useState(false);
   const [showFinish, setShowFinish] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [sessionRevPrompt, setSessionRevPrompt] = useState<{
+    sessionId: string;
+    topicId: string;
+    topicName: string;
+    nextState: DaySessionsState;
+  } | null>(null);
+  const [yesterdayRevision, setYesterdayRevision] =
+    useState<LocalRevision | null>(null);
   const nudge = useMemo(
     () => timerNudge[Math.floor(Math.random() * timerNudge.length)],
     [],
@@ -113,6 +123,7 @@ function SessionTimerInner() {
 
     const day = loadDaySessions();
     setRevision(getSameDayRevision());
+    setYesterdayRevision(getNextDayRevisionForToday());
     const open = getOpenSession(day);
 
     // Prefer active in the URL; otherwise first paused — never auto-resume.
@@ -178,6 +189,7 @@ function SessionTimerInner() {
       const day = loadDaySessions();
       setState(day);
       setRevision(getSameDayRevision());
+      setYesterdayRevision(getNextDayRevisionForToday());
       if (sessionId) {
         const latest = getSessionById(sessionId, day);
         if (latest) {
@@ -293,7 +305,7 @@ function SessionTimerInner() {
     await flushLocalState();
   }
 
-  async function afterFinish(next: DaySessionsState) {
+  async function continueAfterSession(next: DaySessionsState) {
     if (allStudyBlocksResolved(next)) {
       celebrateDayComplete();
       await schedulePostStudyRevisions();
@@ -303,14 +315,46 @@ function SessionTimerInner() {
       router.replace(sessionHref(stillOpen.id));
       return;
     }
-    const sameDay =
-      getSameDayRevision() ?? (await ensureSameDayRevision());
-    setRevision(sameDay);
-    if (sameDay && !sameDay.completedAt) {
-      router.push("/revision?type=same_day");
+    setRevision(getSameDayRevision());
+    setYesterdayRevision(getNextDayRevisionForToday());
+    router.push("/session");
+  }
+
+  async function afterFinish(next: DaySessionsState) {
+    // Optional session revision prompt — never auto-start daily revision
+    if (session) {
+      setSessionRevPrompt({
+        sessionId: session.id,
+        topicId: session.topicId,
+        topicName: session.topicName,
+        nextState: next,
+      });
       return;
     }
-    router.push("/");
+    await continueAfterSession(next);
+  }
+
+  async function acceptSessionRevision() {
+    if (!sessionRevPrompt) return;
+    const prompt = sessionRevPrompt;
+    setSessionRevPrompt(null);
+    const created = createSessionRevision({
+      sessionId: prompt.sessionId,
+      topicId: prompt.topicId,
+      topicName: prompt.topicName,
+    });
+    if (allStudyBlocksResolved(prompt.nextState)) {
+      celebrateDayComplete();
+      await schedulePostStudyRevisions();
+    }
+    router.push(revisionHref("session", created.id));
+  }
+
+  async function skipSessionRevision() {
+    if (!sessionRevPrompt) return;
+    const next = sessionRevPrompt.nextState;
+    setSessionRevPrompt(null);
+    await continueAfterSession(next);
   }
 
   async function onFinish(payload: {
@@ -543,67 +587,98 @@ function SessionTimerInner() {
         </div>
       )}
 
-      {/* Daily revision — start / resume from Session tab */}
+      {/* Soft revision todos — full board lives under Revisions tab */}
       {!gate && state ? (
-        <div
-          className={`mt-4 rounded-[20px] border border-border-soft p-4 ${
-            revision?.completedAt
-              ? "bg-pastel-green/30"
-              : revision?.runStatus === "active" ||
-                  revision?.runStatus === "paused"
-                ? "bg-pastel-pink/25"
-                : "bg-pastel-yellow/35"
-          }`}
-        >
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div>
-              <p className="text-caption">Revision</p>
+        <div className="mt-4 space-y-3">
+          {yesterdayRevision && !yesterdayRevision.completedAt ? (
+            <div className="rounded-[20px] border border-border-soft bg-pastel-yellow/35 p-4">
+              <p className="text-caption">Todo</p>
               <p className="font-display text-base font-semibold text-charcoal">
-                Daily revision
+                Yesterday&apos;s revision
               </p>
-              <p className="text-caption">
-                {revision?.completedAt
-                  ? "Completed"
-                  : revision?.runStatus === "active"
-                    ? `Running · ${formatDuration(liveRevisionMs(revision))}`
-                    : revision?.runStatus === "paused"
-                      ? `Paused · ${formatDuration(liveRevisionMs(revision))}`
-                      : "Start anytime — part of today’s sessions"}
-              </p>
+              <p className="text-caption">Revisit yesterday&apos;s notes</p>
+              <Link
+                href={revisionHref("next_day", yesterdayRevision.id)}
+                className="touch-target mt-3 inline-flex items-center justify-center rounded-[var(--radius-button)] bg-pastel-pink px-4 py-2 text-sm font-semibold text-charcoal"
+              >
+                Open
+              </Link>
             </div>
-            <span
-              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                revision?.completedAt
-                  ? "bg-pastel-green/50 text-pastel-green-deep"
-                  : revision?.runStatus === "active"
-                    ? "bg-pastel-green/50 text-pastel-green-deep"
-                    : revision?.runStatus === "paused"
-                      ? "bg-pastel-yellow/70 text-charcoal"
-                      : "bg-warm-white text-muted border border-border-soft"
-              }`}
-            >
+          ) : null}
+          <div
+            className={`rounded-[20px] border border-border-soft p-4 ${
+              revision?.completedAt
+                ? "bg-pastel-green/30"
+                : "bg-pastel-yellow/35"
+            }`}
+          >
+            <p className="text-caption">Daily revision</p>
+            <p className="font-display text-base font-semibold text-charcoal">
+              End-of-day review
+            </p>
+            <p className="text-caption">
               {revision?.completedAt
                 ? "Completed"
-                : revision?.runStatus === "active"
-                  ? "Live"
-                  : revision?.runStatus === "paused"
-                    ? "Paused"
-                    : "Ready"}
-            </span>
+                : revision?.runStatus === "paused"
+                  ? `Paused · ${formatDuration(liveRevisionMs(revision))}`
+                  : revision?.runStatus === "active"
+                    ? `Live · ${formatDuration(liveRevisionMs(revision))}`
+                    : "Optional anytime — see Revisions tab"}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {!revision?.completedAt ? (
+                <Link
+                  href={revisionHref("same_day", revision?.id)}
+                  className="touch-target inline-flex items-center justify-center rounded-[var(--radius-button)] bg-pastel-pink px-4 py-2 text-sm font-semibold text-charcoal"
+                >
+                  {revision?.runStatus === "active" ||
+                  revision?.runStatus === "paused"
+                    ? "Open timer"
+                    : "Open"}
+                </Link>
+              ) : null}
+              <Link
+                href="/revisions"
+                className="touch-target inline-flex items-center justify-center rounded-[var(--radius-button)] border border-border-soft bg-warm-white px-4 py-2 text-sm font-semibold text-charcoal"
+              >
+                All revisions
+              </Link>
+            </div>
           </div>
-          {!revision?.completedAt ? (
-            <Link
-              href={revisionHref("same_day")}
-              className="touch-target mt-3 inline-flex items-center justify-center rounded-[var(--radius-button)] bg-pastel-pink px-4 py-2 text-sm font-semibold text-charcoal"
-            >
-              {revision?.runStatus === "active" ||
-              revision?.runStatus === "paused"
-                ? "Open running revision"
-                : "Start daily revision"}
-            </Link>
-          ) : null}
         </div>
       ) : null}
+
+      <Modal
+        open={Boolean(sessionRevPrompt)}
+        title="Session revision?"
+        onClose={() => void skipSessionRevision()}
+        footer={
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button
+              className="w-full"
+              onClick={() => void acceptSessionRevision()}
+            >
+              Yes — short overlook
+            </Button>
+            <Button
+              variant="secondary"
+              className="w-full"
+              onClick={() => void skipSessionRevision()}
+            >
+              Skip for now
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-quote">
+          Nice finish on{" "}
+          <span className="font-semibold text-charcoal">
+            {sessionRevPrompt?.topicName}
+          </span>
+          . Want an optional session revision — a quick revisit of what you just
+          studied?
+        </p>
+      </Modal>
 
       {session && (isActive || isPaused) ? (
         <>

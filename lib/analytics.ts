@@ -193,6 +193,12 @@ export function computeAnalytics(rangeDays = 90): AnalyticsSnapshot {
   for (const s of sessions) {
     byDate.set(s.planDate, (byDate.get(s.planDate) ?? 0) + s.accumulatedStudyMs);
   }
+  // Revision time counts as study time too
+  for (const r of revisions) {
+    const ms = r.studyMs || 0;
+    if (ms <= 0) continue;
+    byDate.set(r.scheduledFor, (byDate.get(r.scheduledFor) ?? 0) + ms);
+  }
   const activeDates = [...byDate.entries()]
     .filter(([, ms]) => ms > 0)
     .map(([d]) => d);
@@ -288,8 +294,19 @@ export function computeAnalytics(rangeDays = 90): AnalyticsSnapshot {
   }));
 
   const studyMs = sumStudy(sessions);
+  const revisionMsTotal = revisions.reduce((sum, r) => sum + (r.studyMs || 0), 0);
   const pauseMs = sumPause(sessions);
-  const ratio = focusRatio(studyMs, pauseMs);
+  const ratio = focusRatio(studyMs + revisionMsTotal, pauseMs);
+
+  const todayRevMs = revisions
+    .filter((r) => r.scheduledFor === today)
+    .reduce((sum, r) => sum + (r.studyMs || 0), 0);
+  const weekRevMs = revisions
+    .filter((r) => r.scheduledFor >= weekStart)
+    .reduce((sum, r) => sum + (r.studyMs || 0), 0);
+  const monthRevMs = revisions
+    .filter((r) => r.scheduledFor.startsWith(month))
+    .reduce((sum, r) => sum + (r.studyMs || 0), 0);
 
   let bestDay: string | null = null;
   let bestDayMs = 0;
@@ -430,10 +447,10 @@ export function computeAnalytics(rangeDays = 90): AnalyticsSnapshot {
   return {
     computedAt: new Date().toISOString(),
     overview: {
-      todayMs: sumStudy(todaySessions),
-      weekMs: sumStudy(weekSessions),
-      monthMs: sumStudy(monthSessions),
-      lifetimeMs: studyMs,
+      todayMs: sumStudy(todaySessions) + todayRevMs,
+      weekMs: sumStudy(weekSessions) + weekRevMs,
+      monthMs: sumStudy(monthSessions) + monthRevMs,
+      lifetimeMs: studyMs + revisionMsTotal,
       currentStreak: streaks.current,
       longestStreak: streaks.longest,
       avgSessionMs,
@@ -449,7 +466,7 @@ export function computeAnalytics(rangeDays = 90): AnalyticsSnapshot {
     focus: {
       studyPct: Math.round(ratio * 100),
       pausePct: Math.round((1 - ratio) * 100),
-      studyMs,
+      studyMs: studyMs + revisionMsTotal,
       pauseMs,
     },
     productivity: {
