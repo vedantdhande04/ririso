@@ -10,6 +10,7 @@ export const SYNC_STORAGE_KEYS = [
   "ririso:notes",
   "ririso:revisions",
   "ririso:calendar-events",
+  "ririso:mock-tests",
 ] as const;
 
 const META_KEY = "ririso:sync-meta";
@@ -347,7 +348,8 @@ function mergeSyncPayloads(newer: SyncPayload, older: SyncPayload): SyncPayload 
       key === "ririso:revisions" ||
       key === "ririso:notes" ||
       key === "ririso:calendar-events" ||
-      key === "ririso:session-history"
+      key === "ririso:session-history" ||
+      key === "ririso:mock-tests"
     ) {
       out[key] = preferPresentJson(newer[key], older[key]);
       continue;

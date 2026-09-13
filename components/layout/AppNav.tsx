@@ -7,11 +7,16 @@ import {
   BarChart3,
   BookOpen,
   CalendarDays,
+  ClipboardList,
   History,
   Home,
   Timer,
 } from "lucide-react";
 
+import {
+  getOpenMockTest,
+  mockHref,
+} from "@/lib/mock-test-storage";
 import {
   getOpenRevision,
   revisionHref,
@@ -25,6 +30,7 @@ const links = [
   { href: "/", label: "Home", icon: Home },
   { href: "/session", label: "Session", icon: Timer },
   { href: "/revisions", label: "Revise", icon: History },
+  { href: "/mocks", label: "Mocks", icon: ClipboardList },
   { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/topics", label: "Topics", icon: BookOpen },
@@ -36,17 +42,31 @@ function useNavLive() {
   const [sessionLive, setSessionLive] = useState(false);
   const [reviseDest, setReviseDest] = useState("/revisions");
   const [reviseLive, setReviseLive] = useState(false);
+  const [mockDest, setMockDest] = useState("/mocks");
+  const [mockLive, setMockLive] = useState(false);
 
   useEffect(() => {
     function refresh() {
       const openStudy = getOpenSession();
       const openRev = getOpenRevision();
+      const openMock = getOpenMockTest();
       setSessionDest(openStudy ? sessionHref(openStudy.id) : "/session");
       setSessionLive(Boolean(openStudy));
       setReviseDest(
         openRev ? revisionHref(openRev.revisionType, openRev.id) : "/revisions",
       );
       setReviseLive(Boolean(openRev));
+      if (openMock) {
+        setMockDest(
+          openMock.status === "awaiting_score"
+            ? mockHref(openMock.id, "score")
+            : mockHref(openMock.id, "run"),
+        );
+        setMockLive(true);
+      } else {
+        setMockDest("/mocks");
+        setMockLive(false);
+      }
     }
     refresh();
     window.addEventListener("focus", refresh);
@@ -59,7 +79,14 @@ function useNavLive() {
     };
   }, [pathname]);
 
-  return { sessionDest, sessionLive, reviseDest, reviseLive };
+  return {
+    sessionDest,
+    sessionLive,
+    reviseDest,
+    reviseLive,
+    mockDest,
+    mockLive,
+  };
 }
 
 function isActivePath(pathname: string, href: string) {
@@ -75,12 +102,29 @@ function isActivePath(pathname: string, href: string) {
       pathname.startsWith("/revision")
     );
   }
+  if (href === "/mocks") {
+    return pathname === "/mocks" || pathname.startsWith("/mocks/");
+  }
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function destFor(
+  href: string,
+  live: {
+    sessionDest: string;
+    reviseDest: string;
+    mockDest: string;
+  },
+) {
+  if (href === "/session") return live.sessionDest;
+  if (href === "/revisions") return live.reviseDest;
+  if (href === "/mocks") return live.mockDest;
+  return href;
 }
 
 export function AppNav() {
   const pathname = usePathname();
-  const { sessionDest, sessionLive, reviseDest, reviseLive } = useNavLive();
+  const live = useNavLive();
 
   return (
     <>
@@ -91,32 +135,28 @@ export function AppNav() {
       >
         <ul className="mx-auto flex max-w-lg items-stretch justify-around px-0.5 py-1">
           {links.map(({ href, label, icon: Icon }) => {
-            const dest =
-              href === "/session"
-                ? sessionDest
-                : href === "/revisions"
-                  ? reviseDest
-                  : href;
+            const dest = destFor(href, live);
             const active = isActivePath(pathname, href);
-            const live =
-              (href === "/session" && sessionLive) ||
-              (href === "/revisions" && reviseLive);
+            const isLive =
+              (href === "/session" && live.sessionLive) ||
+              (href === "/revisions" && live.reviseLive) ||
+              (href === "/mocks" && live.mockLive);
             return (
               <li key={href} className="flex-1">
                 <Link
                   href={dest}
-                  className={`touch-target relative flex flex-col items-center justify-center gap-0.5 rounded-[18px] px-0.5 py-2 text-[10px] transition-transform active:scale-95 ${
+                  className={`touch-target relative flex flex-col items-center justify-center gap-0.5 rounded-[16px] px-0.5 py-1.5 text-[9px] transition-transform active:scale-95 sm:text-[10px] ${
                     active
                       ? "bg-pastel-pink/60 text-charcoal font-semibold"
                       : "text-muted"
                   }`}
                 >
-                  <Icon size={18} strokeWidth={1.75} />
+                  <Icon size={17} strokeWidth={1.75} />
                   <span>{label}</span>
-                  {live ? (
+                  {isLive ? (
                     <span
                       aria-hidden
-                      className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-pastel-green-deep"
+                      className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-pastel-green-deep"
                     />
                   ) : null}
                 </Link>
@@ -136,16 +176,18 @@ export function AppNav() {
         <p className="mt-1 text-caption">Study with softness</p>
         <ul className="mt-8 flex flex-col gap-2">
           {links.map(({ href, label, icon: Icon }) => {
-            const dest =
-              href === "/session"
-                ? sessionDest
-                : href === "/revisions"
-                  ? reviseDest
-                  : href;
+            const dest = destFor(href, live);
             const active = isActivePath(pathname, href);
-            const live =
-              (href === "/session" && sessionLive) ||
-              (href === "/revisions" && reviseLive);
+            const isLive =
+              (href === "/session" && live.sessionLive) ||
+              (href === "/revisions" && live.reviseLive) ||
+              (href === "/mocks" && live.mockLive);
+            const display =
+              label === "Revise"
+                ? "Revisions"
+                : label === "Mocks"
+                  ? "Mock tests"
+                  : label;
             return (
               <li key={href}>
                 <Link
@@ -158,15 +200,15 @@ export function AppNav() {
                 >
                   <span className="relative">
                     <Icon size={18} strokeWidth={1.75} />
-                    {live ? (
+                    {isLive ? (
                       <span
                         aria-hidden
                         className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-pastel-green-deep"
                       />
                     ) : null}
                   </span>
-                  {label === "Revise" ? "Revisions" : label}
-                  {live ? (
+                  {display}
+                  {isLive ? (
                     <span className="ml-auto text-[10px] font-semibold text-pastel-green-deep">
                       Live
                     </span>
