@@ -29,5 +29,8 @@ export const ADDITIONAL_SUBJECTS = [
   "General Science",
   "Current Affairs",
   "Reasoning",
+  "Environment",
+  "English",
+  "Marathi",
   "None",
 ] as const;

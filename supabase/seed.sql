@@ -16,8 +16,11 @@ values
   ('Geography', 'third', 2),
   ('General Science', 'additional', 1),
   ('Current Affairs', 'additional', 2),
-  ('Reasoning', 'additional', 3)
-on conflict (name) do nothing;
+  ('Reasoning', 'additional', 3),
+  ('Environment', 'additional', 4),
+  ('English', 'additional', 5),
+  ('Marathi', 'additional', 6)
+on conflict (name, shift_slot) do nothing;
 
 -- Clear any previously seeded starter topics (safe if you already ran the old seed)
 delete from public.topics;

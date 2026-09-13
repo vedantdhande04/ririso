@@ -128,7 +128,10 @@ export function PlanningGate() {
   }, [plan]);
 
   function findSubject(shift: ShiftSlot, subjectName: string) {
-    return subjectsForShift(catalog, shift).find((s) => s.name === subjectName);
+    return (
+      subjectsForShift(catalog, shift).find((s) => s.name === subjectName) ??
+      catalog.find((s) => s.name === subjectName)
+    );
   }
 
   function updateShift(shift: ShiftSlot, subjectName: string | null) {
