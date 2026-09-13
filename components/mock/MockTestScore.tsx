@@ -17,15 +17,23 @@ import {
 } from "@/lib/mock-test-storage";
 import { formatDuration } from "@/lib/session-storage";
 
+function digitsOnly(raw: string) {
+  return raw.replace(/\D/g, "");
+}
+
+function parseCount(raw: string) {
+  if (raw.trim() === "") return 0;
+  return Number(raw) || 0;
+}
+
 function MockTestScoreInner() {
   const router = useRouter();
   const params = useSearchParams();
   const id = params.get("id");
 
   const [mock, setMock] = useState<MockTestLocal | null>(null);
-  const [attempted, setAttempted] = useState(0);
-  const [correct, setCorrect] = useState(0);
-  const [incorrect, setIncorrect] = useState(0);
+  const [attemptedText, setAttemptedText] = useState("");
+  const [correctText, setCorrectText] = useState("");
   const [saving, setSaving] = useState(false);
   const [ready, setReady] = useState(false);
 
@@ -37,12 +45,18 @@ function MockTestScoreInner() {
     const found = getMockTest(id);
     setMock(found);
     if (found) {
-      setAttempted(found.attempted ?? found.totalQuestions);
-      setCorrect(found.correct ?? 0);
-      setIncorrect(found.incorrect ?? 0);
+      const attempted =
+        found.attempted ?? (found.status === "completed" ? 0 : found.totalQuestions);
+      const correct = found.correct ?? 0;
+      setAttemptedText(found.status === "completed" ? String(attempted) : String(found.totalQuestions));
+      setCorrectText(found.status === "completed" ? String(correct) : "");
     }
     setReady(true);
   }, [id]);
+
+  const attempted = parseCount(attemptedText);
+  const correct = parseCount(correctText);
+  const incorrect = Math.max(0, attempted - correct);
 
   const previewAccuracy = useMemo(() => {
     if (attempted <= 0) return null;
@@ -75,10 +89,15 @@ function MockTestScoreInner() {
   function onSave() {
     if (!mock || saving) return;
     setSaving(true);
+    const cappedAttempted = Math.min(
+      Math.max(0, attempted),
+      mock.totalQuestions,
+    );
+    const cappedCorrect = Math.min(Math.max(0, correct), cappedAttempted);
     const next = saveMockScores(mock.id, {
-      attempted,
-      correct,
-      incorrect,
+      attempted: cappedAttempted,
+      correct: cappedCorrect,
+      incorrect: Math.max(0, cappedAttempted - cappedCorrect),
     });
     if (next) setMock(next);
     setSaving(false);
@@ -121,43 +140,45 @@ function MockTestScoreInner() {
               Questions attempted
               <Input
                 className="mt-2"
-                type="number"
-                min={0}
-                max={mock.totalQuestions}
-                value={attempted}
-                onChange={(e) => setAttempted(Number(e.target.value) || 0)}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                placeholder="0"
+                value={attemptedText}
+                onChange={(e) => setAttemptedText(digitsOnly(e.target.value))}
               />
             </label>
             <label className="block text-sm font-medium text-charcoal">
               Correct
               <Input
                 className="mt-2"
-                type="number"
-                min={0}
-                max={attempted || mock.totalQuestions}
-                value={correct}
-                onChange={(e) => setCorrect(Number(e.target.value) || 0)}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                placeholder="0"
+                value={correctText}
+                onChange={(e) => setCorrectText(digitsOnly(e.target.value))}
               />
             </label>
-            <label className="block text-sm font-medium text-charcoal">
-              Incorrect
-              <Input
-                className="mt-2"
-                type="number"
-                min={0}
-                max={attempted || mock.totalQuestions}
-                value={incorrect}
-                onChange={(e) => setIncorrect(Number(e.target.value) || 0)}
-              />
-            </label>
-            {previewAccuracy != null ? (
-              <p className="text-caption">
-                Accuracy preview · {previewAccuracy}%
+            <p className="text-caption">
+              Incorrect · {correct > attempted ? "—" : incorrect} (from attempted −
+              correct)
+            </p>
+            {previewAccuracy != null && correct <= attempted ? (
+              <p className="text-caption">Accuracy preview · {previewAccuracy}%</p>
+            ) : null}
+            {correct > attempted ? (
+              <p className="text-sm text-pastel-pink-deep">
+                Correct can’t be higher than attempted.
               </p>
             ) : null}
             <Button
               className="mt-4 w-full"
-              disabled={saving}
+              disabled={
+                saving ||
+                attemptedText === "" ||
+                correctText === "" ||
+                correct > attempted ||
+                attempted > mock.totalQuestions
+              }
               onClick={onSave}
             >
               {saving ? "Saving…" : "Save scores"}

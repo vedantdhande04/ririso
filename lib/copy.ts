@@ -76,9 +76,20 @@ export const momentLines: Record<HomeMoment, string[]> = {
   ],
 };
 
-export function pickMomentLine(moment: HomeMoment): string {
+/** Stable pick for the calendar day + moment (avoids quote flicker on refresh/sync). */
+export function pickMomentLine(
+  moment: HomeMoment,
+  dayKey: string = new Date().toISOString().slice(0, 10),
+): string {
   const lines = momentLines[moment];
-  return lines[Math.floor(Math.random() * lines.length)] ?? lines[0];
+  if (lines.length === 0) return "";
+  if (lines.length === 1) return lines[0];
+  let hash = 0;
+  const seed = `${dayKey}:${moment}`;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  return lines[hash % lines.length] ?? lines[0];
 }
 
 export const supportive = {

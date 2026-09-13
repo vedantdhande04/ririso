@@ -147,6 +147,7 @@ export function HomeDashboard() {
         sessions: blocks,
         revision: sameDay,
       });
+      // Deterministic for the day — do not re-roll on every sync/timer refresh.
       setMomentLine(pickMomentLine(moment));
 
       if (!pledgedToday) {
